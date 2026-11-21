@@ -39,8 +39,7 @@
  * headers do not declare. Card plugins and the other shipped images reach
  * the libraries through public API only -- a card plugin through the public
  * CardSession calls (transmit, transmitRaw, the transaction and channel
- * calls). The only internal symbols exported are listed, with their reason,
- * in ci/abi/5.x-internal-exports.txt.
+ * calls), and no internal symbol is exported.
  */
 
 LM_5 {

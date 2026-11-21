@@ -44,12 +44,11 @@ class CardSession;
 
 namespace LibreSCRS::SmartCard::Internal {
 
-// Exported (its typeinfo and vtable): the connection throws it, and it leaves
-// libLibreSCRS_SmartCard through the CardConnection calls a card plugin makes
-// and through the exported CardSession members; a catch by this type in
-// another image -- a test, a probe -- matches only the one typeinfo object
-// that libc++ on x86_64 compares by address.
-class LIBRESCRS_PUBLIC_API PCSCError : public std::runtime_error
+// Hidden, its typeinfo too. It leaves libLibreSCRS_SmartCard through the
+// CardConnection calls of the card plugins, which catch std::runtime_error;
+// only the library catches it by type. Tests and probes that catch it throw
+// it from their own copy of the connection.
+class PCSCError : public std::runtime_error
 {
 public:
     PCSCError(const std::string& msg, LONG code) : std::runtime_error(msg), errorCode(code) {}

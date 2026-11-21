@@ -30,9 +30,8 @@
 #   6  control: the same run under a PATH shim that HAS c++filt    -> 0
 #   7  c++filt taken off PATH                                      -> 2
 #   8  an exported data symbol                                     -> 2
-#   9  an exported Internal:: function is a leak; listed for the plugin
-#      that imports it, it is refused (strict); renamed, it is a leak,
-#      the plugin's import is a hidden symbol and the entry is stale -> 1/1/1
+#   9  an exported Internal:: function is a leak; a plugin importing it
+#      is named; renamed, the plugin's import is a hidden symbol    -> 1/1/1
 #  10  a public function taking an Internal:: type                 -> 1
 #  11  one function exported by two libraries, --check / --update  -> 1
 #
@@ -48,21 +47,14 @@
 #  17  a function declared only as a friend                        -> 1
 #  18  a function declared only in an installed tree's detail/
 #      directory, which install() excludes                         -> 1
-#  19  the allowlist: an entry whose export is gone, an entry without
-#      a reason, a "thrown:" reason on a function                  -> 1/2/2
 #  20  CXX is not clang                                            -> 2
 #
-# The import and inline-body rules, and the shrink-only rule:
+# The import and inline-body rules:
 #  21  a plugin imports a symbol no core library exports (hidden)   -> 1
 #  22  an inline function in an installed header calls a function
 #      no core library exports                                     -> 1
-#  23  the same inline body calling an Internal:: export the
-#      allowlist does not name                                     -> 1
+#  23  the same inline body calling an exported detail:: function  -> 1
 #  24  control: an inline body calling an exported public function  -> 0
-#  25  an entry added against --allowlist-base, and its control     -> 1/0
-#      (thrown entries; run after 26, whose fixture it reuses)
-#  26  a "thrown:" entry: the library throws the type (control), and
-#      the same typeinfo exported with no throw site in the library -> 0/1
 #  28  an installed header opening a condition on
 #      LIBRESCRS_INTERNAL_BUILD, and the detail/ control          -> 1/0
 set -uo pipefail
@@ -121,8 +113,7 @@ says() {  # says <label> <text>
     fi
 }
 
-# fixture <root>: the gate, its helper, an empty allowlist, the header of the
-# three stub functions, which every stub below exports, and a card plugin that
+# fixture <root>: the gate, its helper, the header of the three stub functions, which every stub below exports, and a card plugin that
 # imports nothing from LibreSCRS (the gate refuses to judge imports without
 # one).
 fixture() {
@@ -132,7 +123,6 @@ fixture() {
     cp "$SUBJECT" "$root/ci/scripts/abi-snapshot.sh"
     cp "$HELPER" "$root/ci/scripts/abi-public-surface.py"
     chmod 0755 "$root/ci/scripts/abi-snapshot.sh"
-    printf '# fixture allowlist\n' > "$root/ci/abi/5.x-internal-exports.txt"
     printf 'namespace LibreSCRS {\nint selftestAlpha(int x);\nint selftestBeta(int x);\nint selftestGamma(int x);\n}\n' \
         > "$root/include/LibreSCRS/Stub.h"
     plugin "$root" 'extern "C" int fixture_plugin_entry() { return 0; }'
@@ -232,7 +222,7 @@ fi
 #     would read as the finding.
 SHIM="$WORK/shim"
 mkdir -p "$SHIM"
-for t in bash sh nm c++filt readelf objdump awk sort find wc basename dirname mktemp diff cat sed grep cp mkdir rm head tr env printf ls uname python3 "$CXX"; do
+for t in bash sh nm c++filt awk sort find wc basename dirname mktemp diff cat sed grep cp mkdir rm head tr env printf ls uname python3 "$CXX"; do
     p="$(command -v "$t" 2>/dev/null)" && ln -sf "$p" "$SHIM/$t"
 done
 root5="$(stub shim-tree)"
@@ -279,9 +269,8 @@ says "an exported data symbol is not dropped in silence" "no
 
 # --- case 9: an exported Internal:: or detail:: symbol is a leak ------------
 #     It used to be dropped by its spelling, which is how 82 internal exports
-#     went unrecorded. Now it is a leak unless the allowlist names it exactly;
-#     allowlisted, it is not recorded; renamed, the new name is a leak and the
-#     entry naming the old one is stale.
+#     went unrecorded. A plugin that imports it is named as well; renamed, the
+#     new name is a leak and the plugin's import of the old one is hidden.
 root9="$WORK/internal"
 fixture "$root9"
 build_internal() {  # build_internal <internal-function-name>
@@ -299,21 +288,18 @@ build_internal() {  # build_internal <internal-function-name>
 }
 build_internal selftestInternal
 rc=$(run "$root9" --update build)
-check "an Internal:: export, not allowlisted: --update" 1 "$rc"
-says "an Internal:: export, not allowlisted: --update" "LibreSCRS::Internal::selftestInternal(int)"
-printf 'libLibreSCRS_Stub.so\tLibreSCRS::Internal::selftestInternal(int)\timported: libfixture-plugin\n' \
-    >> "$root9/ci/abi/5.x-internal-exports.txt"
+check "an Internal:: export: --update" 1 "$rc"
+says "an Internal:: export: --update" "LibreSCRS::Internal::selftestInternal(int)"
 plugin "$root9" 'namespace LibreSCRS { namespace Internal { int selftestInternal(int x); } }
 int fixture_use() { return LibreSCRS::Internal::selftestInternal(1); }'
 rc=$(run "$root9" --update build)
-check "the same export, listed for its importer: strict" 1 "$rc"
-says "the same export, listed for its importer: strict" "STRICT"
-says "the same export, listed for its importer: strict" "IMPORT OF AN INTERNAL SYMBOL"
+check "the same export, imported by a plugin" 1 "$rc"
+says "the same export, imported by a plugin" "IMPORT OF AN INTERNAL SYMBOL"
+says "the same export, imported by a plugin" "libfixture-plugin.so  LibreSCRS::Internal::selftestInternal(int)"
 build_internal selftestInternalRenamed
 rc=$(run "$root9" --check build)
 check "a renamed Internal:: export" 1 "$rc"
 says "a renamed Internal:: export" "LibreSCRS::Internal::selftestInternalRenamed(int)"
-says "a renamed Internal:: export" "STALE ALLOWLIST"
 says "a renamed Internal:: export" "IMPORT OF A HIDDEN SYMBOL"
 
 # --- case 10: a public function that takes an Internal:: type ---------------
@@ -530,34 +516,6 @@ rc=$(run "$root18" --update build)
 check "a function declared only under detail/" 1 "$rc"
 says "a function declared only under detail/" "LibreSCRS::selftestUnwrap(int)"
 
-# 19: every entry earns its place. Starting from the green, allowlisted case 9
-#     fixture with its first function restored:
-build_internal selftestInternal
-command cp -f "$root9/ci/abi/5.x-internal-exports.txt" "$WORK/allow9.good"
-#   (a) the export is hidden, the entry kept
-plugin "$root9" 'namespace LibreSCRS { namespace Internal { int selftestInternal(int x); } }
-int fixture_use() { return LibreSCRS::Internal::selftestInternal(1); }'
-build_internal_free() {
-    printf 'namespace LibreSCRS {\nint selftestAlpha(int x) { return x + 1; }\nint selftestBeta(int x) { return x + 2; }\nint selftestGamma(int x) { return x + 3; }\n}\n' > "$root9/stub.cpp"
-    g++ -shared -fPIC -o "$root9/build/lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0" "$root9/stub.cpp" 2>"$WORK/gcc.err" \
-        || { echo "FATAL: could not rebuild the case 9 stub" >&2; exit 2; }
-}
-build_internal_free
-rc=$(run "$root9" --check build)
-check "an entry whose export is gone" 1 "$rc"
-says "an entry whose export is gone" "no longer an internal export"
-build_internal selftestInternal
-#   (b) an entry without a reason
-printf 'libLibreSCRS_Stub.so\tLibreSCRS::Internal::selftestInternal(int)\n' > "$root9/ci/abi/5.x-internal-exports.txt"
-rc=$(run "$root9" --check build)
-check "an entry without a reason" 2 "$rc"
-#   (c) "thrown:" is a reason only for an exception type's typeinfo
-printf 'libLibreSCRS_Stub.so\tLibreSCRS::Internal::selftestInternal(int)\tthrown: not a typeinfo\n' \
-    > "$root9/ci/abi/5.x-internal-exports.txt"
-rc=$(run "$root9" --check build)
-check "a thrown: reason on a function" 2 "$rc"
-command cp -f "$WORK/allow9.good" "$root9/ci/abi/5.x-internal-exports.txt"
-
 # 20: the public surface is read from clang's AST; gcc cannot produce it.
 rc=$( if ( cd "$root12" && CXX=g++ ./ci/scripts/abi-snapshot.sh --check build ) > "$WORK/out" 2>&1; then echo 0; else echo $?; fi )
 check "CXX is not clang" 2 "$rc"
@@ -590,7 +548,7 @@ root22="$root"
 rc=$(run "$root22" --update build)
 check "an inline body calling an unexported function" 1 "$rc"
 says "an inline body calling an unexported function" "LibreSCRS::selftestKey calls LibreSCRS::selftestGeneration(int), which no core library exports"
-#     23: the callee is an exported detail:: function the allowlist does not name.
+#     23: the callee is an exported detail:: function.
 custom inline-detail \
     "namespace LibreSCRS { $PUBLIC_FNS namespace detail { int selftestGeneration(int x); }
 inline int selftestKey(int x) { return detail::selftestGeneration(x) + 1; } }" \
@@ -609,61 +567,6 @@ namespace LibreSCRS { $PUBLIC_DEFS }"
 root24="$root"
 rc=$(run "$root24" --update build)
 check "control: an inline body calling public API" 0 "$rc"
-
-# --- 26: a "thrown:" entry is verified, not trusted --------------------------
-#     The typeinfo of an Internal exception type, exported because the library
-#     throws it out of an exported function. The control throws it; the
-#     perturbed library still exports the same typeinfo (it builds the type,
-#     so its vtable and typeinfo are emitted) but throws nothing, so the entry has nothing to stand on.
-thrown_fixture() {  # thrown_fixture <body of selftestAlpha>
-    root26="$WORK/thrown"
-    rm -rf "$root26"
-    fixture "$root26"
-    {
-        printf '#include <stdexcept>\n'
-        printf 'namespace LibreSCRS { namespace Internal {\n'
-        printf 'struct %s SelftestError : std::runtime_error { using std::runtime_error::runtime_error; };\n' "$EXPORT"
-        printf '} %s int selftestAlpha(int x) { %s }\n' "$EXPORT" "$1"
-        printf '%s int selftestBeta(int x) { return x + 2; }\n%s int selftestGamma(int x) { return x + 3; }\n}\n' "$EXPORT" "$EXPORT"
-    } > "$root26/stub.cpp"
-    g++ -shared -fPIC -O2 -fvisibility=hidden -fvisibility-inlines-hidden \
-        -o "$root26/build/lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0" "$root26/stub.cpp" 2>"$WORK/gcc.err" \
-        || { echo "FATAL: could not build the thrown-type stub" >&2; sed 's/^/        /' "$WORK/gcc.err" >&2; exit 2; }
-    printf 'libLibreSCRS_Stub.so\ttypeinfo for LibreSCRS::Internal::SelftestError\tthrown: leaves selftestAlpha\n' \
-        > "$root26/ci/abi/5.x-internal-exports.txt"
-    printf 'libLibreSCRS_Stub.so\ttypeinfo name for LibreSCRS::Internal::SelftestError\tthrown: leaves selftestAlpha\n' \
-        >> "$root26/ci/abi/5.x-internal-exports.txt"
-    printf 'libLibreSCRS_Stub.so\tvtable for LibreSCRS::Internal::SelftestError\tthrown: leaves selftestAlpha\n' \
-        >> "$root26/ci/abi/5.x-internal-exports.txt"
-}
-thrown_fixture 'if (x < 0) throw Internal::SelftestError("negative"); return x + 1;'
-rc=$(run "$root26" --update build)
-check "control: a thrown: entry the library throws" 0 "$rc"
-thrown_fixture 'Internal::SelftestError e("built, never thrown"); return x + e.what()[0];'
-rc=$(run "$root26" --update build)
-check "a thrown: entry with no throw site" 1 "$rc"
-says "a thrown: entry with no throw site" "has no throw site for this type"
-
-# --- 25: the list only shrinks ----------------------------------------------
-#     The case 26 fixture as a git repository whose base commit lists the
-#     exception type's typeinfo. A second entry -- its typeinfo name, a real,
-#     thrown internal export -- is green without a base and red against it.
-git_fixture() { git -C "$root26" -c user.name=selftest -c user.email=selftest@invalid \
-    -c commit.gpgsign=false -c core.hooksPath=/dev/null "$@"; }
-thrown_fixture 'if (x < 0) throw Internal::SelftestError("negative"); return x + 1;'
-grep -v 'typeinfo name for' "$root26/ci/abi/5.x-internal-exports.txt" > "$WORK/allow25.base"
-command cp -f "$root26/ci/abi/5.x-internal-exports.txt" "$WORK/allow25.full"
-command cp -f "$WORK/allow25.base" "$root26/ci/abi/5.x-internal-exports.txt"
-git_fixture init -q
-git_fixture add ci/abi/5.x-internal-exports.txt
-git_fixture commit -q -m base
-command cp -f "$WORK/allow25.full" "$root26/ci/abi/5.x-internal-exports.txt"
-rc=$(run "$root26" --update build)
-check "control: the added entry, judged without a base" 0 "$rc"
-rc=$(run "$root26" --check --allowlist-base HEAD build)
-check "an entry added against the base" 1 "$rc"
-says "an entry added against the base" "ALLOWLIST GREW"
-says "an entry added against the base" "typeinfo name for LibreSCRS::Internal::SelftestError"
 
 # --- 28: an installed header with an internal-only part ----------------------
 #     One class for the consumer, another for the library's own build: the

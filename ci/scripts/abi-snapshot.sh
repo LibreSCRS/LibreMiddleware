@@ -25,11 +25,9 @@
 # / removed / signature changed — with a one-line review per change.
 #
 # Usage:
-#   abi-snapshot.sh [--check|--update] [--allowlist-base <rev>] [BUILD_DIR]
+#   abi-snapshot.sh [--check|--update] [BUILD_DIR]
 #
-# Default action: --check. Default BUILD_DIR: build. With --allowlist-base,
-# every entry of the internal-export allowlist must already be in the
-# allowlist at <rev> (CI passes the merge base): the list only shrinks.
+# Default action: --check. Default BUILD_DIR: build.
 #
 # Needs clang (CXX, default clang++) and python3 besides nm and c++filt: the
 # public surface is read from clang's AST of the installed headers.
@@ -50,14 +48,13 @@ export LC_ALL=C
 # no symbols, and `--update` wrote a baseline of comments over a real one. The
 # sibling repository's snapshot already refuses an empty section for exactly
 # this reason; a missing tool is "I cannot measure", never a pass.
-for tool in nm c++filt python3 readelf objdump; do
+for tool in nm c++filt python3; do
     command -v "$tool" >/dev/null 2>&1 \
         || { echo "FATAL: $tool not found on PATH -- cannot measure the ABI surface" >&2; exit 2; }
 done
 
 ACTION="check"
 BUILD_DIR="build"
-ALLOWLIST_BASE=""
 
 # What the scan actually saw. A section that exists but yields nothing is a
 # broken artefact; no section at all is an unbuilt tree. Both are exit 2.
@@ -102,16 +99,12 @@ NOT_RECORDED_BINDINGS="W V u A"
 # 82 internal symbols, and it recorded 35 secure-channel members, declared only
 # in headers that are never installed, as public 5.x ABI.
 #
-# Strict: the only internal symbols exported are the typeinfo, typeinfo name
-# and vtable of an exception type the library throws, listed one by one with
-# the reason ("thrown:") in ci/abi/5.x-internal-exports.txt and not recorded in
-# the baseline; an entry for an importer is refused. The same pass reads what
-# the shipped images -- a card plugin, a sibling LibreSCRS library, the
-# installed test archive -- import (an import of a hidden or internal symbol
-# fails, except the typeinfo a catch of a listed type needs) and what inline
-# bodies of the installed headers call, and fails an installed header that
-# opens a condition on LIBRESCRS_INTERNAL_BUILD. Against --allowlist-base, an
-# added entry fails.
+# No internal symbol is exported, none is listed as an exception. The same
+# pass reads what the shipped images -- a card plugin, a sibling LibreSCRS
+# library, the installed test archive -- import (an import of a hidden or
+# internal symbol fails) and what inline bodies of the installed headers call,
+# and fails an installed header that opens a condition on
+# LIBRESCRS_INTERNAL_BUILD.
 
 # emit_symbols <label> <file>
 #
@@ -155,11 +148,7 @@ emit_symbols() {
         echo "       Refusing to emit an empty snapshot for this section." >&2
         exit 2
     fi
-    # The allowlisted internal exports are not a contract with any consumer,
-    # so they are not recorded. Matched exactly, line for line: no spelling of a
-    # name exempts anything.
-    awk -F'\t' -v lib="$label" '!/^#/ && NF == 3 && $1 == lib { print $2 }' "$ALLOWLIST" > "$SCRATCH/allowed"
-    printf '%s\n' "$syms" | grep -vxF -f "$SCRATCH/allowed" || true
+    printf '%s\n' "$syms"
     artefacts_scanned=$((artefacts_scanned + 1))
     total_symbols=$((total_symbols + n))
 }
@@ -168,9 +157,6 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --check) ACTION="check"; shift ;;
         --update) ACTION="update"; shift ;;
-        --allowlist-base)
-            [[ $# -ge 2 ]] || { echo "ERROR: --allowlist-base needs a revision" >&2; exit 2; }
-            ALLOWLIST_BASE="$2"; shift 2 ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
             exit 0
@@ -186,13 +172,10 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BASELINE="${REPO_ROOT}/ci/abi/5.x-baseline.txt"
-ALLOWLIST="${REPO_ROOT}/ci/abi/5.x-internal-exports.txt"
 SURFACE="${REPO_ROOT}/ci/scripts/abi-public-surface.py"
 INCLUDE_ROOT="${REPO_ROOT}/include"
 CXX="${CXX:-clang++}"
-for f in "$ALLOWLIST" "$SURFACE"; do
-    [[ -f "$f" ]] || { echo "FATAL: required file '$f' not found" >&2; exit 2; }
-done
+[[ -f "$SURFACE" ]] || { echo "FATAL: required file '$SURFACE' not found" >&2; exit 2; }
 if ! "$CXX" --version 2>/dev/null | grep -q clang; then
     echo "FATAL: '$CXX' is not clang -- the public surface is read from clang's AST" >&2
     exit 2
@@ -251,8 +234,7 @@ fi
 # within the major version. Which copy a process runs depends on load order.
 # Vague-linkage entries (V, W) legitimately appear in every library that uses
 # a type, so this judges T only -- the bindings the snapshot records.
-# Allowlisted internal functions count too: they are not recorded, but two
-# exporting copies are still two owners. Refused for --update as well, so the
+# Refused for --update as well, so the
 # duplicate cannot be written into the baseline.
 dup_owners="$(awk -F'\t' '{ n[$1]++; libs[$1] = libs[$1] " " $2 }
     END { for (s in n) if (n[s] > 1) print s "\t" libs[s] }' "$OWNERS" | sort)"
@@ -267,14 +249,6 @@ if [[ -n "$dup_owners" ]]; then
     echo "       instead of absorbing its implementation into a second library." >&2
     exit 1
 fi
-
-# Where each core library is, for the check that a "thrown:" entry's type is
-# really thrown by the library that exports its typeinfo.
-IMAGES="${SCRATCH}/images.tsv"
-while IFS= read -r so; do
-    name="$(basename "$so")"
-    printf '%s\t%s\n' "${name%.*.*.*}" "$so"
-done < <(find "$BUILD_DIR/lib/LibreSCRS" -maxdepth 1 -name 'libLibreSCRS_*.so.[0-9]*.[0-9]*.[0-9]*' | sort) > "$IMAGES"
 
 # What the shipped images import: the core libraries (sibling imports), every
 # card plugin, and the installed test archive (minus what its own members
@@ -302,24 +276,11 @@ while IFS= read -r archive; do
         | awk -v img="$(basename "$archive")" '{ print img "\t" $0 }' >> "$IMPORTS"
 done < <(find "$BUILD_DIR/lib/LibreSCRS" -maxdepth 1 -name 'libLibreSCRSTesting_*.a' | sort)
 
-base_args=()
-if [[ -n "$ALLOWLIST_BASE" ]]; then
-    if ! git -C "$REPO_ROOT" rev-parse --verify --quiet "${ALLOWLIST_BASE}^{commit}" >/dev/null; then
-        echo "FATAL: --allowlist-base '$ALLOWLIST_BASE' is not a commit of this checkout" >&2
-        exit 2
-    fi
-    if git -C "$REPO_ROOT" show "${ALLOWLIST_BASE}:ci/abi/5.x-internal-exports.txt" > "$SCRATCH/base-allowlist" 2>/dev/null; then
-        base_args=(--base-allowlist "$SCRATCH/base-allowlist")
-    else
-        echo "note: ${ALLOWLIST_BASE} holds no internal-export allowlist; additions are not judged against it"
-    fi
-fi
-
 # Refused for --update as well, so an internal export cannot be written into
 # the baseline as public ABI.
 surface_rc=0
 python3 "$SURFACE" --clang "$CXX" --include-root "$INCLUDE_ROOT" --exports "$EXPORTS" \
-    --imports "$IMPORTS" --allowlist "$ALLOWLIST" --images "$IMAGES" "${base_args[@]}" || surface_rc=$?
+    --imports "$IMPORTS" || surface_rc=$?
 if [[ "$surface_rc" -ne 0 ]]; then
     exit "$surface_rc"
 fi

@@ -407,19 +407,6 @@ EXPECTED_CORE_SOS=6
 # matching a spelling. Overridable so the self-test can record a surface for its
 # own fixture; unset, it is this checkout's.
 ABI_BASELINE="${LIBRESCRS_ABI_BASELINE:-$(cd "$(dirname "$0")/.." && pwd)/abi/5.x-baseline.txt}"
-# The internal exports that shipped in-tree images still import: exported, but
-# not recorded as surface. abi-snapshot.sh owns the list and judges it (every
-# entry must still be an internal export, and it only shrinks); here it only
-# says which exported T symbols are not leaks. Overridable for the self-test,
-# like the surface.
-ABI_INTERNAL_EXPORTS="${LIBRESCRS_ABI_INTERNAL_EXPORTS:-$(cd "$(dirname "$0")/.." && pwd)/abi/5.x-internal-exports.txt}"
-
-# Prints the allowlisted internal T exports of one library, exactly as listed.
-allowlisted_exports() {
-    local name="$1"
-    awk -F'\t' -v lib="$name" '!/^#/ && NF == 3 && $1 == lib { print $2 }' "$ABI_INTERNAL_EXPORTS"
-}
-
 # Prints the recorded T-binding symbols of one library, or fails when the
 # surface does not record it at all. A library the baseline has never seen is
 # "cannot judge": comparing against an empty set would call every symbol a leak,
@@ -460,9 +447,8 @@ recorded_surface() {
 # lambda's operator or guard. Such a symbol is an inline or template
 # instantiation the linker exported because nothing hid it; the next library
 # that instantiates the same name binds to whichever copy loaded first.
-# Excluded: the vtable and typeinfo of a class the library exports on purpose
-# (an exception type caught across a library boundary needs its typeinfo
-# there). A standard-library entity such as std::__detail is not this rule's
+# Excluded: vtables and typeinfo, which abi-snapshot.sh judges against the
+# installed headers like every other export. A standard-library entity such as std::__detail is not this rule's
 # subject: foreign_weak_exports below refuses every one of them. Read from the
 # dynamic table: what a consumer can bind to.
 internal_weak_exports() {
@@ -517,28 +503,21 @@ scan_core_so_against_surface() {
     dyn=$(nm -D -U "$so" 2>/dev/null || true)
 
     surface=$(recorded_surface "$name")
-    # Read in a process substitution below, where an exit would not stop this
-    # script, so the list's presence is decided here.
-    if [[ ! -r "$ABI_INTERNAL_EXPORTS" ]]; then
-        echo "FATAL: no internal-export list at $ABI_INTERNAL_EXPORTS — cannot judge what is allowed" >&2
-        exit 2
-    fi
     if [[ -z "$surface" ]]; then
         echo "FATAL: the recorded surface has no section for $name — cannot judge it" >&2
         exit 2
     fi
 
-    # The allowlisted internal exports are not recorded as surface; they are
-    # matched exactly, line for line (abi-snapshot.sh owns that list). No
-    # spelling of a name exempts anything: the rule that dropped every
-    # ::Internal:: or ::detail:: name hid 82 internal exports from this check.
+    # Matched exactly, line for line. No spelling of a name exempts anything:
+    # the rule that dropped every ::Internal:: or ::detail:: name hid 82
+    # internal exports from this check.
     t_all=$(printf '%s\n' "$dyn" \
         | awk '$2 == "T" { print $3 }' \
         | c++filt \
         | sort -u || true)
 
     extra=$(comm -23 <(printf '%s\n' "$t_all" | sed '/^$/d') \
-                     <({ printf '%s\n' "$surface"; allowlisted_exports "$name"; } | sort -u) || true)
+                     <(printf '%s\n' "$surface" | sort -u) || true)
 
     wv_leaks=$(printf '%s\n' "$syms" \
         | awk '$2 == "W" || $2 == "V" { print $3 }' \

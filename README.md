@@ -97,9 +97,7 @@ Intentional API changes require a baseline update via
 as the change. The same check refuses any exported symbol that names a
 `LibreSCRS` entity the installed headers do not declare, any such symbol a
 shipped plugin or library imports, and any inline function in an installed
-header that calls one; the few internal exports shipped images still import
-are listed one by one, with the importer, in
-`ci/abi/5.x-internal-exports.txt`, which only shrinks.
+header that calls one.
 
 The public surface follows the conventions documented in the
 [LibreSCRS API Policy](https://LibreSCRS.github.io/developer-guide/sdk-reference/api-policy/):

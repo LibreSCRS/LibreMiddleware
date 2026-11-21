@@ -6,9 +6,9 @@
 #                         (the leading `_` is Apple's convention; the
 #                         Itanium-ABI mangling on Darwin is `_ZN9...` with
 #                         the extra `_` prefix making it `__ZN9...`).
-#                         Covers the LM-internal cross-`.so` ABI shared
-#                         with card plugins via the
-#                         `LibreSCRS::SmartCard::Internal::` namespace.
+#                         Internal:: and detail:: entities match too; they
+#                         stay out of the export table because they are
+#                         hidden at their declaration.
 #
 # Everything else (bundled OpenSSL, libresign internals, vendored
 # nlohmann / miniz / pugixml) collapses to hidden so the public macOS
@@ -24,9 +24,6 @@
 # same reason as there: `__ZTV*LibreSCRS*` also admitted the vtable of
 # a standard-library template instantiated on a LibreSCRS type, such as
 # `std::_Sp_counted_ptr_inplace<LibreSCRS::Trust::TrustStore, ...>`.
-# Both modes preserve the same intentional cross-`.so`
-# `LibreSCRS::*::Internal::` reach surface via the `__ZN9LibreSCRS*`
-# prefix family below.
 
 __ZN9LibreSCRS*
 __ZNK9LibreSCRS*
