@@ -49,7 +49,7 @@ public:
     [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
     transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& /*cmd*/, LibreSCRS::CancelToken /*token*/) override
     {
-        // 6F00: no card answered, the same word a detached session reports.
+        // 6F00: no card answered.
         LibreSCRS::SmartCard::Internal::APDUResponse resp;
         resp.sw1 = 0x6F;
         resp.sw2 = 0x00;

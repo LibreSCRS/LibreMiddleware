@@ -27,12 +27,13 @@ namespace LibreSCRS::SmartCard {
 class CardConnection : public IConnection
 {
 public:
-    /// Begins an exclusive PC/SC transaction and records it as held. Not
-    /// counted: one endTransaction() ends it however often it was begun.
+    /// Begins an exclusive PC/SC transaction and records it as held. Each
+    /// call needs its own endTransaction(): the reader counts them.
     virtual void beginTransaction() = 0;
     /// Ends the transaction, clearing the record first. Never throws.
     virtual void endTransaction() noexcept = 0;
-    /// True between beginTransaction() and endTransaction().
+    /// The last of beginTransaction() and endTransaction() was a begin; not
+    /// a count.
     [[nodiscard]] virtual bool isTransactionHeld() const noexcept = 0;
     [[nodiscard]] virtual std::vector<std::uint8_t> getATR() const = 0;
     /// Re-establishes the connection without resetting the card.

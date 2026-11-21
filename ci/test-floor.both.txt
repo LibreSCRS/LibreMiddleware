@@ -13,7 +13,7 @@ CancellationNviTests 4
 CardPluginContainmentTests 8
 CardPluginDecipherDefaultTest 2
 CardSessionApiInvariantTest 1
-CardSessionByteTransportTest 35
+CardSessionByteTransportTest 36
 CardSessionOpenTests 4
 CrossBackendTests 1
 CrossProviderCoordinationTests 7

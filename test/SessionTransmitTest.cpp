@@ -87,17 +87,6 @@ TEST_F(SessionTransmitTest, routesThroughSmWhenChannelLive)
     EXPECT_EQ(resp.sw2, 0x00);
 }
 
-TEST_F(SessionTransmitTest, returnsSw6F00OnDetachedSessionWithoutLiveChannel)
-{
-    // No injected channel and no connection: the null-conn guard
-    // short-circuits to SW=6F00 rather than emitting a PC/SC transmit. (A
-    // reader that fails throws instead: AFailingReaderThrows.)
-    LibreSCRS::SmartCard::Testing::SessionAccess::dropConnection(*session);
-    auto resp = LibreSCRS::SmartCard::SessionConnection::toResponse(session->transmit(makeProbeCommand().toBytes()));
-    EXPECT_EQ(resp.sw1, 0x6F);
-    EXPECT_EQ(resp.sw2, 0x00);
-}
-
 // A secure-messaging channel that is no longer open -- closed by a reset,
 // failed on a bad MAC -- is never bypassed by the operation running over it:
 // that operation meant its commands to be protected. The funnel answers the

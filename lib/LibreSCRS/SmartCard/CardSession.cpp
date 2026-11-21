@@ -482,7 +482,7 @@ std::vector<std::uint8_t> CardSession::transmit(std::span<const std::uint8_t> ap
 {
     auto cmd = LibreSCRS::SmartCard::Internal::parseCommand(apdu);
     if (!cmd) {
-        throw std::invalid_argument("CardSession::transmit: not a well-formed command APDU");
+        throw std::invalid_argument("CardSession::transmit: not a command APDU in the accepted encoding");
     }
     // The thread that holds the holder is the only one that can change the
     // session meanwhile: it reads and sends without the lock (the holder
@@ -494,9 +494,6 @@ std::vector<std::uint8_t> CardSession::transmit(std::span<const std::uint8_t> ap
     // sent: whatever the card answers, the record no longer holds.
     const bool leavesApplication = selectsAwayFromApplication(*cmd);
     if (d->callerOwnsActiveChannel()) {
-        if (!d->ownedConn) {
-            return statusOnly(0x6F, 0x00);
-        }
         if (leavesApplication) {
             forgetChannelApplet(*d);
         }
@@ -506,9 +503,6 @@ std::vector<std::uint8_t> CardSession::transmit(std::span<const std::uint8_t> ap
     // here as on the holder's thread: it is never dropped implicitly, so a
     // command the caller meant to be protected never goes plain.
     std::lock_guard lock(d->sessionMutex);
-    if (!d->ownedConn) {
-        return statusOnly(0x6F, 0x00);
-    }
     if (leavesApplication) {
         forgetChannelApplet(*d);
     }
@@ -524,9 +518,6 @@ std::vector<std::uint8_t> CardSession::transmitRaw(std::span<const std::uint8_t>
     // would bypass it, so they are refused. That thread is the only one that
     // can change the session meanwhile, so it reads and sends without the lock.
     if (d->callerOwnsActiveChannel()) {
-        if (!d->ownedConn) {
-            return statusOnly(0x6F, 0x00);
-        }
         if (d->activeChannel && d->activeChannel->carriesSm()) {
             return statusOnly(0x6F, 0x02);
         }
@@ -543,9 +534,6 @@ std::vector<std::uint8_t> CardSession::transmitRaw(std::span<const std::uint8_t>
     // have meant them to be protected (only discardFailedChannel() or an
     // activation drops it).
     std::lock_guard lock(d->sessionMutex);
-    if (!d->ownedConn) {
-        return statusOnly(0x6F, 0x00);
-    }
     if (d->activeChannel && d->activeChannel->carriesSm()) {
         return statusOnly(0x6F, 0x02);
     }
@@ -577,30 +565,22 @@ std::uint64_t CardSession::generation() const noexcept
 
 void CardSession::reconnect()
 {
-    if (!d->ownedConn) {
-        throw std::runtime_error("CardSession::reconnect: the session holds no connection");
-    }
     d->ownedConn->reconnect();
 }
 
 void CardSession::beginTransaction()
 {
-    if (!d->ownedConn) {
-        throw std::runtime_error("CardSession::beginTransaction: the session holds no connection");
-    }
     d->ownedConn->beginTransaction();
 }
 
 void CardSession::endTransaction() noexcept
 {
-    if (d && d->ownedConn) {
-        d->ownedConn->endTransaction();
-    }
+    d->ownedConn->endTransaction();
 }
 
 bool CardSession::isTransactionHeld() const noexcept
 {
-    return d && d->ownedConn && d->ownedConn->isTransactionHeld();
+    return d->ownedConn->isTransactionHeld();
 }
 
 std::optional<LibreSCRS::SecureChannel::ChannelState> CardSession::channelState() const noexcept
@@ -645,9 +625,6 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
 
     if (token.isCancellable() && token.isCancelled()) {
         return std::unexpected{ChannelActivationError::Cancelled};
-    }
-    if (!d->ownedConn) {
-        return std::unexpected{ChannelActivationError::ReaderError};
     }
     // Re-entrancy guard: a caller already holding this session's
     // ActiveChannelHolder on this thread would self-deadlock on the
@@ -744,9 +721,6 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
 
     if (token.isCancellable() && token.isCancelled()) {
         return std::unexpected{ChannelActivationError::Cancelled};
-    }
-    if (!d->ownedConn) {
-        return std::unexpected{ChannelActivationError::ReaderError};
     }
     // Re-entrancy guard: a caller already holding this session's
     // ActiveChannelHolder on this thread would self-deadlock on the
@@ -1226,11 +1200,11 @@ ChipAuthReport CardSession::performChipAuthentication(std::span<const std::uint8
     // owns the session mutex and the PC/SC transaction, so the session state
     // is read without locking (locking would self-deadlock) and no other
     // command can land between the key agreement and the proof exchange.
-    if (!d || !d->callerOwnsActiveChannel()) {
+    if (!d->callerOwnsActiveChannel()) {
         return noVerdict(ChipAuthReason::NoUsableChannel,
                          "chip authentication needs the session's active channel held");
     }
-    if (!d->ownedConn || !d->activeChannel || d->activeChannel->state() != ChannelState::Open) {
+    if (!d->activeChannel || d->activeChannel->state() != ChannelState::Open) {
         return noVerdict(ChipAuthReason::NoUsableChannel, "no open channel to run chip authentication over");
     }
     if (isCancelled(token)) {

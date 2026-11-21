@@ -316,14 +316,6 @@ TEST_F(CardSessionByteTransportTest, ACommandCollectsAChainedAnswer)
     EXPECT_EQ(rawCommands[1], (Bytes{0x00, 0xC0, 0x00, 0x00, 0x01}));
 }
 
-TEST_F(CardSessionByteTransportTest, ASessionWithoutAConnectionAnswers6F00)
-{
-    SessionAccess::dropConnection(*session);
-
-    EXPECT_EQ(session->transmit(kSelect), (Bytes{0x6F, 0x00}));
-    EXPECT_EQ(session->transmitRaw(kSelect), (Bytes{0x6F, 0x00}));
-}
-
 TEST_F(CardSessionByteTransportTest, AFailingReaderThrows)
 {
     // An unrigged detached connection has no card to reach: the reader error
@@ -334,15 +326,15 @@ TEST_F(CardSessionByteTransportTest, AFailingReaderThrows)
     EXPECT_THROW((void)bare->transmitRaw(kSelect), std::runtime_error);
 }
 
-TEST_F(CardSessionByteTransportTest, AMalformedCommandIsRejectedUnsent)
+TEST_F(CardSessionByteTransportTest, AnEncodingOutsideTheAcceptedFormIsRejectedUnsent)
 {
-    const std::vector<Bytes> malformed{
+    const std::vector<Bytes> refused{
         {0x00, 0xA4, 0x04},                         // shorter than a header
         {0x00, 0xA4, 0x04, 0x00, 0x05, 0x01},       // Lc 5, one data byte
         {0x00, 0xB0, 0x00, 0x00, 0x00, 0x00},       // 00 with one byte after it
-        {0x00, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00}, // extended Le 65536: no command encodes to it
+        {0x00, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00}, // extended Le 0000: valid, but not the shortest form
     };
-    for (const auto& bytes : malformed) {
+    for (const auto& bytes : refused) {
         EXPECT_THROW((void)session->transmit(bytes), std::invalid_argument);
     }
     EXPECT_TRUE(plainCommands.empty());
@@ -559,6 +551,21 @@ TEST_F(CardSessionByteTransportTest, ATransactionIsHeldUntilItEnds)
     EXPECT_FALSE(session->isTransactionHeld());
 }
 
+// The record is not a count: it follows the last begin or end. The reader
+// counts, so every end must reach it, the second one included.
+TEST_F(CardSessionByteTransportTest, EveryEndReachesTheReaderWhateverTheRecordSays)
+{
+    int releases = 0;
+    LibreSCRS::SmartCard::Internal::connectionOf(*session).setDetachedTransactionReleaseObserver(
+        [&releases] { ++releases; });
+    session->beginTransaction();
+    session->beginTransaction();
+    session->endTransaction();
+    EXPECT_FALSE(session->isTransactionHeld());
+    session->endTransaction();
+    EXPECT_EQ(releases, 2);
+}
+
 TEST_F(CardSessionByteTransportTest, ARefusedTransactionIsNotHeld)
 {
     LibreSCRS::SmartCard::Internal::connectionOf(*session).setDetachedTransactionFailure(
@@ -670,6 +677,14 @@ TEST(ApduParseCommand, AnLeOf256IsShort)
     EXPECT_EQ(withData.toBytes(), (Bytes{0x00, 0x2A, 0x9E, 0x9A, 0x02, 0x01, 0x02, 0x00}));
     const APDUCommand alone{0x00, 0xB0, 0x00, 0x00, {}, 256, true};
     EXPECT_EQ(alone.toBytes(), (Bytes{0x00, 0xB0, 0x00, 0x00, 0x00}));
+}
+
+// After a short Lc there is one Le byte at most (ISO/IEC 7816-4, 5.1): short
+// data followed by two Le bytes is no command.
+TEST(ApduParseCommand, ShortDataWithATwoByteLeIsRefused)
+{
+    using LibreSCRS::SmartCard::Internal::parseCommand;
+    EXPECT_FALSE(parseCommand(Bytes{0x00, 0x2A, 0x9E, 0x9A, 0x02, 0x01, 0x02, 0x01, 0x00}).has_value());
 }
 
 // A command the byte interface cannot take is a failure of the call, which a

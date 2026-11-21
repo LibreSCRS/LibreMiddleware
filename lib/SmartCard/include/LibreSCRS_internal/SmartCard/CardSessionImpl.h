@@ -61,6 +61,7 @@ inline constexpr std::size_t kPaceSecretKindCount = static_cast<std::size_t>(Aut
 ///        shared library's dynamic symbol table.
 struct LIBRESCRS_INTERNAL CardSession::Impl
 {
+    // Set by both constructors and never cleared, so members use it unchecked.
     std::unique_ptr<LibreSCRS::SmartCard::Internal::PCSCConnection> ownedConn;
     std::string readerName;
     std::vector<std::uint8_t> atr;

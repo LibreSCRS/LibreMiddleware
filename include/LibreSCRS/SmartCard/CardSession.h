@@ -137,17 +137,38 @@ struct OpenError
 /// @c std::make_shared<CardSession>(std::move(*result)).
 ///
 /// @par Thread-safety
-/// Thread-compatible (see API-POLICY §8). A CardSession represents an
-/// exclusive PC/SC connection to a single reader/card and is NOT internally
-/// synchronised: concurrent operations against the same session from
-/// multiple threads are undefined. Callers
-/// that need to dispatch work from several threads must serialise APDUs
-/// externally (e.g. by holding the session under a mutex) or allocate one
-/// session per worker. The pure accessors (@ref readerName, @ref atr) read
-/// immutable post-construction state and may be called concurrently. Sibling pimpl-backed types
-/// (@ref LibreSCRS::Signing::SigningService) take a
+/// Several threads may share one session, within these rules:
+/// - @ref transmit, @ref transmitRaw, @ref discardFailedChannel,
+///   @ref activateChannelFor, @ref activateChannelWithSm,
+///   @ref clearActiveChannel, the credential members
+///   (@ref setCredentialProvider, @ref setPaceSecret, @ref setBacInput,
+///   @ref clearCachedPaceCredentials, @ref hasCredentialProvider) and the
+///   channel queries (@ref hasLiveSecureChannel, @ref activatedProtocol,
+///   @ref channelState, @ref carriesSecureMessaging,
+///   @ref forgetCurrentApplet) are ordered against each other by the
+///   session's lock. An @ref ActiveChannelHolder keeps that lock for its
+///   lifetime, so such a call from another thread waits until the holder is
+///   released.
+/// - On the thread that holds the @ref ActiveChannelHolder, @ref transmit,
+///   @ref transmitRaw, @ref discardFailedChannel, the channel queries and
+///   @ref performChipAuthentication run without the lock. The activations
+///   refuse there; the credential members and @ref clearActiveChannel must
+///   not be called there, they would wait for the lock that thread holds.
+/// - @ref reconnect, @ref beginTransaction, @ref endTransaction and
+///   @ref isTransactionHeld take no lock: the caller serialises them against
+///   every other call on the session.
+/// - @ref readerName, @ref atr and @ref generation read state fixed at open
+///   and may be called from any thread at any time.
+///
+/// Sibling types (@ref LibreSCRS::Signing::SigningService) take a
 /// @c std::shared_ptr<CardSession> by value and assume the caller has
-/// already established that exclusivity for the duration of the call.
+/// established exclusive use of the session for the duration of the call.
+///
+/// @par Moved-from sessions
+/// A moved-from session holds no state. Only destruction, move-assignment
+/// and @c operator bool are defined on it; calling any other member,
+/// @ref endTransaction and @ref isTransactionHeld included, is undefined
+/// behaviour.
 ///
 /// @par Smart-pointer integration (since 4.2)
 /// Inherits @c std::enable_shared_from_this<CardSession>. @c shared_from_this()
@@ -200,8 +221,8 @@ public:
 
     /// @brief True when this object holds a valid (non-moved-from) pimpl.
     ///
-    /// `if (!session)` is always well-defined; calling @ref readerName or
-    /// @ref atr on a moved-from session is undefined behaviour. Consumers that move sessions into
+    /// `if (!session)` is always well-defined; calling any other member on a
+    /// moved-from session is undefined behaviour. Consumers that move sessions into
     /// @c std::shared_ptr<CardSession> for signing should check the
     /// source-object state before the move if the source remains in scope.
     /// @since 4.0
@@ -234,13 +255,11 @@ public:
     /// @ref LibreSCRS::SecureChannel::ISecureChannel::carriesSm returns
     /// true are counted.
     ///
-    /// @note Acquires the session mutex for the duration of the call so it
-    ///       is safe to invoke concurrently with activation paths. On
-    ///       lock acquisition failure (allocator pressure inside
-    ///       @c std::mutex) the call returns @c false and skips the
-    ///       check — the noexcept contract is preserved at the cost of a
-    ///       conservative answer for a coordination predicate. Calling
-    ///       any accessor on a moved-from session is undefined behaviour.
+    /// @note Owner-tolerant, as @ref channelState. On lock acquisition
+    ///       failure (allocator pressure inside @c std::mutex) the call
+    ///       returns @c false and skips the check — the noexcept contract is
+    ///       preserved at the cost of a conservative answer for a
+    ///       coordination predicate.
     /// @since 4.1
     [[nodiscard]] bool hasLiveSecureChannel() const noexcept;
 
@@ -248,12 +267,10 @@ public:
     ///        (after any BAC fallback), or nullopt if no SM channel is active.
     ///        Recorded at activation time; cleared on channel teardown.
     ///
-    /// @note Acquires the session mutex for the duration of the call so it is
-    ///       safe to invoke concurrently with activation paths. On lock
-    ///       acquisition failure (allocator pressure inside @c std::mutex) the
-    ///       call returns @c nullopt — the noexcept contract is preserved at the
-    ///       cost of a conservative answer. Calling any accessor on a moved-from
-    ///       session is undefined behaviour.
+    /// @note Owner-tolerant, as @ref channelState. On lock acquisition failure
+    ///       (allocator pressure inside @c std::mutex) the call returns
+    ///       @c nullopt — the noexcept contract is preserved at the cost of a
+    ///       conservative answer.
     /// @since 5.0
     [[nodiscard]] std::optional<SmProtocolRequest> activatedProtocol() const noexcept;
 
@@ -469,19 +486,25 @@ public:
     ///   it fetches a chained answer (status word @c 61xx, GET RESPONSE) and,
     ///   on a T=0 card, resends with the length a @c 6Cxx answer names.
     ///
-    /// @param apdu  The command, encoded per ISO/IEC 7816-4 (short or
-    ///              extended length).
+    /// @param apdu  The command, encoded per ISO/IEC 7816-4 with the shortest
+    ///              length fields that carry it: short (one-byte Lc and Le,
+    ///              Le @c 00 meaning 256) unless the data exceeds 255 bytes or
+    ///              more than 256 answer bytes are expected, extended (both
+    ///              fields) otherwise, with an extended Le from @c 0001 to
+    ///              @c FFFF. The session sends the command it decodes, so it
+    ///              accepts only bytes that encode back to themselves: an
+    ///              extended field where a short one suffices, or an extended
+    ///              Le of @c 0000, is valid ISO/IEC 7816-4 but refused.
     /// @param token Cancellation, handed to the channel: an open channel
     ///              answers @c 6F01 without sending once it is cancelled.
-    /// @return The answer: response data followed by SW1 SW2. @c 6F00 when the
-    ///         session holds no connection to a card.
+    /// @return The answer: response data followed by SW1 SW2.
     ///
     /// A SELECT that leaves the application the session's channel was
     /// activated for makes the session forget that application first, as
     /// @ref forgetCurrentApplet describes.
     ///
-    /// @throws std::invalid_argument when @p apdu is not a well-formed command
-    ///         APDU in the encoding this library produces; nothing is sent.
+    /// @throws std::invalid_argument when @p apdu is not a command APDU in the
+    ///         encoding described for @p apdu; nothing is sent.
     /// @throws std::runtime_error when the reader fails or the card goes away
     ///         during the exchange.
     ///
@@ -522,8 +545,7 @@ public:
     ///
     /// @param apdu The command bytes, sent unchanged.
     /// @return The answer: response data followed by SW1 SW2. @c 6F02 when a
-    ///         secure-messaging channel refuses it (see above); @c 6F00 when the
-    ///         session holds no connection to a card.
+    ///         secure-messaging channel refuses it (see above).
     ///
     /// @throws std::runtime_error when the reader fails or the card goes away
     ///         during the exchange.
@@ -600,9 +622,10 @@ public:
     /// @brief Take exclusive use of the card: no other application's commands
     ///        reach it until @ref endTransaction.
     ///
-    /// Not counted: one @ref endTransaction ends it however many times it was
-    /// begun. @ref activateChannelFor and @ref activateChannelWithSm take one
-    /// for the lifetime of the @ref ActiveChannelHolder they return; while
+    /// Every call needs its own @ref endTransaction: the reader counts them
+    /// (pcsc-lite does), and the card stays held until the last one ends.
+    /// @ref activateChannelFor and @ref activateChannelWithSm take one for the
+    /// lifetime of the @ref ActiveChannelHolder they return; while
     /// @ref isTransactionHeld is true, do not begin another.
     ///
     /// @throws std::runtime_error when the reader refuses (the card was removed
@@ -610,13 +633,16 @@ public:
     /// @since 5.0
     void beginTransaction();
 
-    /// @brief End the exclusive use @ref beginTransaction took. Does nothing
-    ///        when none is held.
+    /// @brief End one exclusive use @ref beginTransaction took. With none
+    ///        outstanding it has no effect.
     /// @since 5.0
     void endTransaction() noexcept;
 
-    /// @brief True while this session holds exclusive use of the card, taken
-    ///        by @ref beginTransaction or by an @ref ActiveChannelHolder.
+    /// @brief True after a @ref beginTransaction (an @ref ActiveChannelHolder
+    ///        takes one) until the next @ref endTransaction.
+    ///
+    /// It reports the last of the two calls, not a count: after begin, begin,
+    /// end it is false although the card stays held until the second end.
     /// @since 5.0
     [[nodiscard]] bool isTransactionHeld() const noexcept;
 

@@ -77,12 +77,6 @@ struct SessionAccess
         }).join();
         return !acquired;
     }
-
-    /// Drops the session's connection: the state of a session that holds none.
-    static void dropConnection(CardSession& session) noexcept
-    {
-        session.d->ownedConn.reset();
-    }
 };
 
 } // namespace LibreSCRS::SmartCard::Testing

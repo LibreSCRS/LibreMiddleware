@@ -73,8 +73,7 @@ std::optional<APDUCommand> parseCommand(std::span<const uint8_t> bytes)
         cmd.le = bytes[4];
         cmd.hasLe = true;
     } else if (bytes[4] != 0x00) {
-        // Short Lc, the data, then nothing, one Le byte, or the two-byte Le
-        // toBytes() writes for an Le of 256 after short data.
+        // Short Lc, the data, then nothing or one Le byte.
         const std::size_t lc = bytes[4];
         if (n < 5 + lc) {
             return std::nullopt;
@@ -83,9 +82,6 @@ std::optional<APDUCommand> parseCommand(std::span<const uint8_t> bytes)
         cmd.data.assign(bytes.begin() + 5, bytes.begin() + 5 + static_cast<std::ptrdiff_t>(lc));
         if (rest == 1) {
             cmd.le = bytes[5 + lc];
-            cmd.hasLe = true;
-        } else if (rest == 2) {
-            cmd.le = twoBytes(5 + lc);
             cmd.hasLe = true;
         } else if (rest != 0) {
             return std::nullopt;
