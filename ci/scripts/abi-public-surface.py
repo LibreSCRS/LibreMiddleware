@@ -38,7 +38,8 @@
 #      executable) is exported by a core library (an exported internal symbol
 #      is already an export leak).
 #   Inline bodies: every LibreSCRS function an inline body of an installed
-#      header calls without defining it is exported by a core library: a consumer that calls the inline function links it.
+#      header calls without defining it is exported by a core library: a
+#      consumer that calls the inline function links it.
 #   Installed headers: none opens a preprocessor condition on
 #      LIBRESCRS_INTERNAL_BUILD -- a consumer and the library see one class.
 #

@@ -31,7 +31,7 @@
 #   7  c++filt taken off PATH                                      -> 2
 #   8  an exported data symbol                                     -> 2
 #   9  an exported Internal:: function is a leak; a plugin importing it
-#      is named; renamed, the plugin's import is a hidden symbol    -> 1/1/1
+#      changes nothing; renamed, its import is a hidden symbol      -> 1/1/1
 #  10  a public function taking an Internal:: type                 -> 1
 #  11  one function exported by two libraries, --check / --update  -> 1
 #
@@ -53,10 +53,14 @@
 #  21  a plugin imports a symbol no core library exports (hidden)   -> 1
 #  22  an inline function in an installed header calls a function
 #      no core library exports                                     -> 1
-#  23  the same inline body calling an exported detail:: function  -> 1
+#  23  the same inline body calling an exported detail:: function
+#      (the export rule refuses it, not the inline-body rule)      -> 1
 #  24  control: an inline body calling an exported public function  -> 0
 #  28  an installed header opening a condition on
 #      LIBRESCRS_INTERNAL_BUILD, and the detail/ control          -> 1/0
+#  29  the installed test archive imports a hidden symbol; control:
+#      another member of the archive defines it                    -> 1/0
+#  30  no card plugin at all                                       -> 2
 set -uo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -113,9 +117,9 @@ says() {  # says <label> <text>
     fi
 }
 
-# fixture <root>: the gate, its helper, the header of the three stub functions, which every stub below exports, and a card plugin that
-# imports nothing from LibreSCRS (the gate refuses to judge imports without
-# one).
+# fixture <root>: the gate, its helper, the header of the three stub
+# functions every stub below exports, and a card plugin that imports nothing
+# from LibreSCRS (the gate refuses to judge imports without one).
 fixture() {
     local root="$1"
     mkdir -p "$root/ci/scripts" "$root/ci/abi" "$root/build/lib/LibreSCRS" "$root/build/plugins" \
@@ -546,7 +550,7 @@ root22="$root"
 rc=$(run "$root22" --update build)
 check "an inline body calling an unexported function" 1 "$rc"
 says "an inline body calling an unexported function" "LibreSCRS::selftestKey calls LibreSCRS::selftestGeneration(int), which no core library exports"
-#     23: the callee is an exported detail:: function.
+#     23: the callee is an exported detail:: function: an export leak.
 custom inline-detail \
     "namespace LibreSCRS { $PUBLIC_FNS namespace detail { int selftestGeneration(int x); }
 inline int selftestKey(int x) { return detail::selftestGeneration(x) + 1; } }" \
@@ -554,8 +558,8 @@ inline int selftestKey(int x) { return detail::selftestGeneration(x) + 1; } }" \
 namespace LibreSCRS { $PUBLIC_DEFS namespace detail { $EXPORT int selftestGeneration(int x) { return x; } } }"
 root23="$root"
 rc=$(run "$root23" --update build)
-check "an inline body calling an internal export" 1 "$rc"
-says "an inline body calling an internal export" "LibreSCRS::detail::selftestGeneration(int)"
+check "an exported detail:: function is a leak" 1 "$rc"
+says "an exported detail:: function is a leak" "LibreSCRS::detail::selftestGeneration(int)"
 #     24: the control -- the callee is exported and public.
 custom inline-public \
     "namespace LibreSCRS { $PUBLIC_FNS
@@ -567,9 +571,8 @@ rc=$(run "$root24" --update build)
 check "control: an inline body calling public API" 0 "$rc"
 
 # --- 28: an installed header with an internal-only part ----------------------
-#     One class for the consumer, another for the library's own build: the
-#     transmitInternal / ActivationProfile shape. detail/ is not installed and
-#     may keep its guard.
+#     One class for the consumer, another for the library's own build.
+#     detail/ is not installed and may keep its guard.
 root28="$(stub internal-part)"
 printf '#pragma once\nnamespace LibreSCRS {\nint selftestAlpha(int x);\nint selftestBeta(int x);\nint selftestGamma(int x);\n#ifdef LIBRESCRS_INTERNAL_BUILD\nint selftestOnlyForTheLibrary(int x);\n#endif\n}\n' \
     > "$root28/include/LibreSCRS/Stub.h"
@@ -583,6 +586,34 @@ printf 'namespace LibreSCRS {\nint selftestAlpha(int x);\nint selftestBeta(int x
     > "$root28/include/LibreSCRS/Stub.h"
 rc=$(run "$root28" --update build)
 check "control: the guard of a detail/ header, which is not installed" 0 "$rc"
+
+# --- 29: the installed test archive is a shipped image too -------------------
+#     One member calls the hidden helper; the control has a second member that
+#     defines it, so the archive's own symbols are taken away from its imports.
+custom archive-import \
+    "namespace LibreSCRS { $PUBLIC_FNS }" \
+    "#include <LibreSCRS/Stub.h>
+namespace LibreSCRS { $PUBLIC_DEFS }"
+root29="$root"
+printf 'namespace LibreSCRS { int selftestHiddenHelper(int x); }\nint fixture_archive_use() { return LibreSCRS::selftestHiddenHelper(1); }\n' > "$root29/user.cpp"
+printf 'namespace LibreSCRS { int selftestHiddenHelper(int x) { return x; } }\n' > "$root29/definer.cpp"
+g++ -c -fPIC -o "$root29/user.o" "$root29/user.cpp" && g++ -c -fPIC -o "$root29/definer.o" "$root29/definer.cpp" \
+    || { echo "FATAL: could not build the archive members" >&2; exit 2; }
+ar rcs "$root29/build/lib/LibreSCRS/libLibreSCRSTesting_Fixture.a" "$root29/user.o" \
+    || { echo "FATAL: could not build the archive" >&2; exit 2; }
+rc=$(run "$root29" --update build)
+check "the test archive importing a hidden symbol" 1 "$rc"
+says "the test archive importing a hidden symbol" "libLibreSCRSTesting_Fixture.a  LibreSCRS::selftestHiddenHelper(int)"
+ar rcs "$root29/build/lib/LibreSCRS/libLibreSCRSTesting_Fixture.a" "$root29/user.o" "$root29/definer.o"
+rc=$(run "$root29" --update build)
+check "control: the archive defines what it uses" 0 "$rc"
+
+# --- 30: no card plugin: imports cannot be judged ----------------------------
+root30="$(stub no-plugin)"
+rm -f "$root30/build/plugins/"*.so
+rc=$(run "$root30" --update build)
+check "no card plugin cannot be judged" 2 "$rc"
+says "no card plugin cannot be judged" "no card plugin"
 
 printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 [ "$fails" = 0 ]
