@@ -113,7 +113,8 @@ TSAClientTests 9
 TlCacheTests 14
 TlSignatureVerifierTests 19
 TrustStoreServiceCreateExpectedTests 4
-TrustStoreServiceTests 14
+TrustStoreServiceLoadTests 8
+TrustStoreServiceTests 6
 TrustedListParserTests 15
 TsaFailureModesTests 9
 TtfParserTests 14

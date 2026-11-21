@@ -399,22 +399,34 @@ target_link_libraries(TrustStoreServiceTests PRIVATE
     LibreSCRS::Trust
     LibreSCRS::Signing
     OpenSSL_Crypto
+)
+target_compile_definitions(TrustStoreServiceTests PRIVATE CMAKE_SOURCE_DIR="${LibreMiddleware_SOURCE_DIR}")
+gtest_discover_tests(TrustStoreServiceTests)
+
+# TrustStoreService — Trusted List loading against lists served on loopback,
+# on the service's test copy: only that copy verifies a list under the test
+# signing certificate. It does not link LibreSCRS::Trust or LibreSCRS::Signing
+# itself; the copy carries both services.
+add_executable(TrustStoreServiceLoadTests trust_store_service_load_test.cpp)
+target_link_libraries(TrustStoreServiceLoadTests PRIVATE
+    GTest::gtest_main
+    LibreSCRS_TrustService_ForTests
     SigningTestSupport
     # A signature through SigningService: the soft-key plugin on a detached
     # session, and the engine's cache writer to stage what it downloads.
-    LibreSCRS::Plugin
     LibreSCRS::SmartCard
     LibreSCRS_SmartCard_TestHelpers
     LibreSign
+    OpenSSL_Crypto
 )
-# The service's private state (Trust/internal/TrustStoreServiceImpl.h) for its
-# test hook, and the libresign types it names.
-target_include_directories(TrustStoreServiceTests PRIVATE
+# The service's private state (Trust/internal/TrustStoreServiceImpl.h) and the
+# libresign types it names.
+target_include_directories(TrustStoreServiceLoadTests PRIVATE
     ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
     ${LibreMiddleware_SOURCE_DIR}/test ${LibreMiddleware_SOURCE_DIR}/test/include)
-target_compile_definitions(TrustStoreServiceTests PRIVATE CMAKE_SOURCE_DIR="${LibreMiddleware_SOURCE_DIR}"
+target_compile_definitions(TrustStoreServiceLoadTests PRIVATE CMAKE_SOURCE_DIR="${LibreMiddleware_SOURCE_DIR}"
     LIBRESCRS_INTERNAL_BUILD)
-gtest_discover_tests(TrustStoreServiceTests)
+gtest_discover_tests(TrustStoreServiceLoadTests)
 
 # TrustStoreService::create std::expected error-shape regression tests
 # (locks the same fallible-factory invariant; mirrors

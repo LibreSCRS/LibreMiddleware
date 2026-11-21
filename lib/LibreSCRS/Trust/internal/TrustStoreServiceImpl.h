@@ -16,7 +16,6 @@
 #include "types.h" // libresign::TrustedListEntry
 
 #include <filesystem>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -57,11 +56,7 @@ struct LIBRESCRS_INTERNAL TrustStoreService::Impl
     std::mutex loadMutex;
     std::set<std::string> loadedSources;
 
-    /// Adjusts an entry before it is fetched. Unset in production; a test
-    /// sets it to name the verification certificate of a list it serves on
-    /// loopback, which no pinned certificate covers.
-    std::function<void(libresign::TrustedListEntry&)> entryHook;
-
+    /// The fetch entry of @p src (TrustStoreServiceEntry.cpp).
     [[nodiscard]] libresign::TrustedListEntry entryFor(const TrustedListSource& src) const;
 
     /// @brief Worker entry point. Captures @p impl by shared_ptr so the

@@ -42,17 +42,6 @@ TrustStoreService::Impl::~Impl()
     }
 }
 
-libresign::TrustedListEntry TrustStoreService::Impl::entryFor(const TrustedListSource& src) const
-{
-    libresign::TrustedListEntry entry;
-    entry.url = src.url;
-    entry.isLotl = src.lotl;
-    entry.eager = src.eager;
-    if (entryHook)
-        entryHook(entry);
-    return entry;
-}
-
 void TrustStoreService::Impl::markLoaded(const std::string& url)
 {
     std::lock_guard lock(loadMutex);

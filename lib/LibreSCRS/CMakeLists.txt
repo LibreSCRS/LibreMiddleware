@@ -84,6 +84,7 @@ add_library(LibreSCRS_Trust SHARED
     Trust/CscaMasterList.cpp
     Trust/TrustStore.cpp
     Trust/TrustStoreService.cpp
+    Trust/TrustStoreServiceEntry.cpp
     Trust/internal/BundledCertsProvider.cpp
     Trust/internal/TrustStoreInternalAccess.cpp
     ${LIBRESCRS_TRUST_PUBLIC_HEADERS}
@@ -684,6 +685,50 @@ target_compile_features(LibreSCRS_SmartCard_CtkForTests PUBLIC cxx_std_23)
 target_compile_definitions(LibreSCRS_SmartCard_CtkForTests PUBLIC
     LIBRESCRS_SMARTCARD_CTK_FAKE LIBRESCRS_INTERNAL_BUILD)
 set_target_properties(LibreSCRS_SmartCard_CtkForTests PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# ──────────────────────────────────────────────────────────────────────────
+# Test-only copy of the trust store service, and of the signing service that
+# drives it.
+#
+# The service's tests serve signed Trusted Lists on loopback, under a test
+# certificate no pinned one covers. libLibreSCRS_Trust has no way to replace
+# the certificate a list is verified against, so this copy carries one:
+# test_helpers/trust_service_test_seam.cpp stands in for
+# TrustStoreServiceEntry.cpp, every other source is the shipped one. The
+# signing service comes too, because one test drives the service through a
+# signature and it must reach this copy. An executable that links this calls
+# both services here; the shipped libraries, which the plugin and smart-card
+# libraries still load, keep their own copies of the same layout.
+#
+# Not installed (no install(TARGETS …) rule). Build-tree-only.
+# ──────────────────────────────────────────────────────────────────────────
+add_library(LibreSCRS_TrustService_ForTests OBJECT
+    Trust/CscaMasterList.cpp
+    Trust/TrustStore.cpp
+    Trust/TrustStoreService.cpp
+    Trust/internal/BundledCertsProvider.cpp
+    Trust/internal/TrustStoreInternalAccess.cpp
+    Trust/test_helpers/trust_service_test_seam.cpp
+    Signing/SigningRequest.cpp
+    Signing/VisualSignatureParams.cpp
+    Signing/TsaProvider.cpp
+    Signing/SigningService.cpp
+    Signing/detail/RequestBridge.cpp
+)
+target_link_libraries(LibreSCRS_TrustService_ForTests
+    PUBLIC LibreSCRS_Auth LibreSCRS_Plugin
+    PRIVATE $<BUILD_INTERFACE:LibreSignPluginKey> $<BUILD_INTERFACE:LibreSign> $<BUILD_INTERFACE:EMRTDCrypto>
+            $<BUILD_INTERFACE:SmartCard_Impl> $<BUILD_INTERFACE:OpenSSL_Crypto> ${CMAKE_DL_LIBS}
+)
+target_include_directories(LibreSCRS_TrustService_ForTests
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/Trust/test_helpers
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Trust ${PROJECT_SOURCE_DIR}/lib/libresign/src ${PROJECT_SOURCE_DIR}/lib
+            ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include)
+target_compile_features(LibreSCRS_TrustService_ForTests PUBLIC cxx_std_23)
+target_compile_definitions(LibreSCRS_TrustService_ForTests PRIVATE LIBRESCRS_INTERNAL_BUILD
+    LIBREMIDDLEWARE_CERTIFICATES_DIR="${LIBREMIDDLEWARE_CERTIFICATES_DIR}"
+    LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR="${LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR}")
+set_target_properties(LibreSCRS_TrustService_ForTests PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # The shipped libraries. LibreSCRS_Secure is an INTERFACE target with no
 # sources of its own, and LibreSCRS_SmartCard_TestHelpers and
