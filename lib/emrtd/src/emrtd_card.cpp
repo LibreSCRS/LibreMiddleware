@@ -81,7 +81,7 @@ std::size_t declaredLength(const std::vector<uint8_t>& fileData)
 
 EMRTDCard::EMRTDCard(LibreSCRS::SecureChannel::ISecureChannel& channel) : channel(channel) {}
 
-std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid, bool skipSelect)
+EMRTDCard::FileRead EMRTDCard::readFile(uint16_t fid, bool skipSelect)
 {
     if (!skipSelect) {
         // SELECT file by FID (P2=0x04: return FCP template).
@@ -92,7 +92,7 @@ std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid, bool skipS
             0x00, 0xA4, 0x02, 0x04, {static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF)}, 0, true};
         auto selectAnswer = channel.transmit(selectCmd, LibreSCRS::CancelToken{});
         if (!selectAnswer)
-            return std::nullopt;
+            return std::unexpected(selectAnswer.error());
         const auto& selectResp = *selectAnswer;
         // A failed SELECT leaves the PREVIOUS file current on many card OSes
         // — reading on would return the wrong file's bytes (e.g. a 6982 on
@@ -114,7 +114,7 @@ std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid, bool skipS
         const bool beyondShortOffset = offset > kMaxShortReadOffset;
         auto answer = channel.transmit(readBinaryAt(offset), LibreSCRS::CancelToken{});
         if (!answer)
-            return std::nullopt;
+            return std::unexpected(answer.error());
         auto& resp = *answer;
         const bool endOfFile = resp.statusWord() == 0x6282;
         if (!resp.isSuccess() && !endOfFile)
@@ -147,14 +147,17 @@ std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid, bool skipS
 
     if (fileData.empty() || totalLength == 0 || fileData.size() < totalLength)
         return std::nullopt;
-    return fileData;
+    return std::optional<std::vector<uint8_t>>{std::move(fileData)};
 }
 
-std::vector<int> EMRTDCard::readCOM()
+std::expected<std::vector<int>, LibreSCRS::SmartCard::TransportError> EMRTDCard::readCOM()
 {
-    auto comData = readFile(FID_COM);
+    auto comRead = readFile(FID_COM);
+    if (!comRead)
+        return std::unexpected(comRead.error());
+    auto& comData = *comRead;
     if (!comData)
-        return {};
+        return std::vector<int>{};
 
     // COM contains tag 0x60, with sub-tag 0x5C listing present DG tags
     std::vector<int> dgList;
@@ -219,16 +222,16 @@ std::vector<int> EMRTDCard::readCOM()
     return dgList;
 }
 
-std::optional<std::vector<uint8_t>> EMRTDCard::readSOD()
+std::expected<std::optional<std::vector<uint8_t>>, LibreSCRS::SmartCard::TransportError> EMRTDCard::readSOD()
 {
     return readFile(FID_SOD);
 }
 
-DGReadResult EMRTDCard::readDataGroupSafe(int dgNumber)
+std::expected<DGReadResult, LibreSCRS::SmartCard::TransportError> EMRTDCard::readDataGroupSafe(int dgNumber)
 {
     uint16_t fid = dgToFID(dgNumber);
     if (fid == 0)
-        return {DGReadStatus::ERROR, {}};
+        return DGReadResult{DGReadStatus::ERROR, {}};
 
     // SELECT file by FID via SM, then check the inner SW.
     // P2=0x04 (return FCP) ensures Le/DO'97 are present in SM — required by some
@@ -237,28 +240,30 @@ DGReadResult EMRTDCard::readDataGroupSafe(int dgNumber)
         0x00, 0xA4, 0x02, 0x04, {static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF)}, 0, true};
     auto selectAnswer = channel.transmit(selectCmd, LibreSCRS::CancelToken{});
     if (!selectAnswer)
-        return {DGReadStatus::ERROR, {}};
+        return std::unexpected(selectAnswer.error());
     const auto& selectResp = *selectAnswer;
     uint16_t sw = selectResp.statusWord();
 
     // Access denied (security status not satisfied / command not allowed)
     if (sw == 0x6982 || sw == 0x6986)
-        return {DGReadStatus::ACCESS_DENIED, {}};
+        return DGReadResult{DGReadStatus::ACCESS_DENIED, {}};
 
     // File not found
     if (sw == 0x6A82)
-        return {DGReadStatus::NOT_PRESENT, {}};
+        return DGReadResult{DGReadStatus::NOT_PRESENT, {}};
 
     // Accept success and warning SWs (9000, 62xx)
     if (selectResp.sw1 != 0x90 && selectResp.sw1 != 0x62)
-        return {DGReadStatus::ERROR, {}};
+        return DGReadResult{DGReadStatus::ERROR, {}};
 
     // File selected successfully — read it, skipping the SELECT we already did
     auto data = readFile(fid, true);
     if (!data)
-        return {DGReadStatus::ERROR, {}};
+        return std::unexpected(data.error());
+    if (!*data)
+        return DGReadResult{DGReadStatus::ERROR, {}};
 
-    return {DGReadStatus::OK, std::move(*data)};
+    return DGReadResult{DGReadStatus::OK, std::move(**data)};
 }
 
 std::vector<ContactPerson> EMRTDCard::parseDG16(const std::vector<uint8_t>& raw)

@@ -3,6 +3,7 @@
 
 #include <LibreSCRS/Auth/ErrorKeys.h>
 #include <LibreSCRS/Auth/PaceSecretKind.h>
+#include <LibreSCRS/Logging.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/PluginExport.h>
 #include <LibreSCRS/Plugin/SecurityCheck.h>
@@ -39,6 +40,7 @@
 #include <algorithm>
 #include <compare>
 #include <cstdint>
+#include <expected>
 #include <ctime>
 #include <map>
 #include <mutex>
@@ -227,8 +229,10 @@ public:
                 try {
                     LibreSCRS::SecureChannel::PlainChannel probeChannel(conn, makeEmrtdAid());
                     emrtd::EMRTDCard probeCard(probeChannel);
-                    readable = !probeCard.readCOM().empty();
-                    probeDone = true;
+                    if (const auto com = probeCard.readCOM()) {
+                        readable = !com->empty();
+                        probeDone = true;
+                    }
                 } catch (...) {
                     // verdict stays unknown
                 }
@@ -272,7 +276,10 @@ public:
     {
         using LibreSCRS::Plugin::ReadResult;
         try {
-            auto data = readCardImpl(cardSession, std::move(onGroup));
+            auto read = readCardImpl(cardSession, std::move(onGroup));
+            if (!read)
+                return ReadResult::communicationError(LibreSCRS::Auth::ErrorKeys::genericComm(), read.error().detail);
+            auto& data = *read;
             for (const auto& g : data.groups) {
                 if (g.groupKey == "error")
                     return ReadResult::authenticationFailed(LibreSCRS::Auth::ErrorKeys::authFailed(),
@@ -462,8 +469,8 @@ public:
     }
 
 private:
-    LibreSCRS::Plugin::CardData readCardImpl(LibreSCRS::SmartCard::CardSession& cardSession,
-                                             GroupCallback onGroup) const
+    std::expected<LibreSCRS::Plugin::CardData, LibreSCRS::SmartCard::TransportError>
+    readCardImpl(LibreSCRS::SmartCard::CardSession& cardSession, GroupCallback onGroup) const
     {
         LibreSCRS::SmartCard::SessionConnection conn(cardSession);
         LibreSCRS::Plugin::CardData data;
@@ -519,7 +526,7 @@ private:
                         // COM read releases the holder and falls back to the
                         // auth_required probe below.
                         emrtd::EMRTDCard probeCard(channel);
-                        if (!probeCard.readCOM().empty()) {
+                        if (const auto com = probeCard.readCOM(); com && !com->empty()) {
                             plainHolder = std::move(*holder);
                             haveChannel =
                                 LibreSCRS::SecureChannel::SessionChannel::held(cardSession, *plainHolder).has_value();
@@ -601,10 +608,18 @@ private:
         // 1. Read COM (data-group presence list). The presence group is emitted
         //    LATER — after the Chip Authentication step — so its auth_method
         //    field can describe a plain→CA upgrade rather than the pre-CA state.
-        auto dgList = cardObj->readCOM();
+        // A link failure before any group is emitted leaves nothing worth
+        // keeping: the read ends as a communication error.
+        auto comRead = cardObj->readCOM();
+        if (!comRead)
+            return std::unexpected(comRead.error());
+        auto dgList = std::move(*comRead);
 
         // 2. Read SOD → store raw bytes
-        auto sodRaw = cardObj->readSOD();
+        auto sodResult = cardObj->readSOD();
+        if (!sodResult)
+            return std::unexpected(sodResult.error());
+        auto sodRaw = std::move(*sodResult);
 
         // 3. Parse SOD → get authoritative DG list from hash entries
         std::vector<int> authoritativeDGs;
@@ -638,7 +653,10 @@ private:
         bool chipAuthUpgraded = false;
 
         if (hasDG14) {
-            auto dg14Result = cardObj->readDataGroupSafe(14);
+            auto dg14Read = cardObj->readDataGroupSafe(14);
+            if (!dg14Read)
+                return std::unexpected(dg14Read.error());
+            const auto& dg14Result = *dg14Read;
             if (dg14Result.status == emrtd::DGReadStatus::OK && !dg14Result.data.empty()) {
                 dgRawData[14] = dg14Result.data;
                 // The session picks the path from the channel it holds: on a
@@ -663,6 +681,12 @@ private:
                     caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::NOT_PERFORMED;
                     break;
                 }
+                // The reader failed under Chip Authentication: nothing further
+                // can be read, so the read stops here.
+                if (report.outcome == LibreSCRS::SmartCard::ChipAuthOutcome::NotPerformed &&
+                    report.reason == LibreSCRS::SmartCard::ChipAuthReason::ReaderError)
+                    return std::unexpected(LibreSCRS::SmartCard::TransportError{
+                        LibreSCRS::SmartCard::TransportError::Kind::ReaderUnavailable, report.detail});
                 caResult.protocol = report.protocolOid;
                 caResult.errorDetail = report.detail;
                 // A plain upgrade replaced (and closed) the channel this
@@ -684,7 +708,10 @@ private:
         //    challenge with the DG15 key that EF.SOD already authenticated, so
         //    the result is verifiable even on a plain channel.
         if (caResult.chipAuthentication != emrtd::crypto::ChipAuthResult::PASSED && hasDG15) {
-            auto dg15Result = cardObj->readDataGroupSafe(15);
+            auto dg15Read = cardObj->readDataGroupSafe(15);
+            if (!dg15Read)
+                return std::unexpected(dg15Read.error());
+            const auto& dg15Result = *dg15Read;
             if (dg15Result.status == emrtd::DGReadStatus::OK && !dg15Result.data.empty()) {
                 dgRawData[15] = dg15Result.data;
                 auto aaResult = emrtd::crypto::performActiveAuth(channel, dg15Result.data, LibreSCRS::CancelToken{});
@@ -744,6 +771,8 @@ private:
         }
 
         // 6. Read remaining DGs and emit groups
+        std::optional<LibreSCRS::SmartCard::TransportError> readInterrupted;
+        int interruptedAt = 0;
         for (int dg : authoritativeDGs) {
             // Skip DG14/DG15 — already read above
             if (dg == 14 || dg == 15)
@@ -754,14 +783,25 @@ private:
             // under an active SM channel the SELECT is not even attempted.
             // Not just an optimization: the SRB-eID-V2.00 family answers that
             // SM SELECT with 6988 and then kills the whole SM session, so
-            // every later file (DG11, DG12, the national annex) died
-            // collaterally with 6F02 — silently. On a plain channel the live
+            // every later file would be lost with it. On a plain channel the live
             // probe stays: a refusal there is harmless, and per-document
             // behaviour varies.
             const bool smChannelActive = !plainRead || chipAuthUpgraded;
-            const emrtd::DGReadResult dgResult = ((dg == 3 || dg == 4) && smChannelActive)
-                                                     ? emrtd::DGReadResult{emrtd::DGReadStatus::ACCESS_DENIED, {}}
-                                                     : cardObj->readDataGroupSafe(dg);
+            emrtd::DGReadResult dgRead{emrtd::DGReadStatus::ACCESS_DENIED, {}};
+            if (!((dg == 3 || dg == 4) && smChannelActive)) {
+                auto read = cardObj->readDataGroupSafe(dg);
+                if (!read) {
+                    // The link is gone: no later group can be read either. Keep
+                    // what was read and say why the rest is missing.
+                    readInterrupted = std::move(read.error());
+                    LibreSCRS::log::warnf("eMRTD read interrupted at DG{}: transport error kind {}: {}", dg,
+                                          static_cast<int>(readInterrupted->kind), readInterrupted->detail);
+                    interruptedAt = dg;
+                    break;
+                }
+                dgRead = std::move(*read);
+            }
+            const emrtd::DGReadResult& dgResult = dgRead;
             if (dgResult.status == emrtd::DGReadStatus::OK && !dgResult.data.empty()) {
                 dgRawData[dg] = dgResult.data;
             }
@@ -1139,6 +1179,38 @@ private:
             addTextField(g, "overall_genuineness", "Chip Genuineness",
                          LibreSCRS::Plugin::statusToString(secStatus.overallGenuineness));
 
+            // An interrupted read still returns what was read; these fields say
+            // that it is partial. The reason is a translation key, like a
+            // check's `reason`.
+            if (readInterrupted) {
+                using Kind = LibreSCRS::SmartCard::TransportError::Kind;
+                const char* reasonKey = "read.reader-lost";
+                switch (readInterrupted->kind) {
+                case Kind::ChannelUnusable:
+                case Kind::IntegrityFailure:
+                    reasonKey = "read.channel-failed";
+                    break;
+                case Kind::NoCardPresent:
+                    reasonKey = "read.card-removed";
+                    break;
+                default:
+                    break;
+                }
+                std::string unread;
+                bool from = false;
+                for (int dg : authoritativeDGs) {
+                    if (dg == 14 || dg == 15)
+                        continue;
+                    from = from || dg == interruptedAt;
+                    if (from)
+                        unread += (unread.empty() ? "DG" : ", DG") + std::to_string(dg);
+                }
+                addTextField(g, "read_interrupted", "Read Interrupted", "true");
+                addTextField(g, "read_interrupted_reason", "Interruption Reason", reasonKey);
+                addTextField(g, "read_interrupted_groups", "Data Groups Not Read", unread);
+                addTextField(g, "annex_skipped", "National Annex Skipped", "true");
+            }
+
             // Each check travels as its own family of fields — `check_<N>_id`,
             // `_category`, `_status`, `_label`, plus `_detail`, `_error` and
             // `_reason` when the check carries them — never as one pre-joined sentence
@@ -1177,8 +1249,9 @@ private:
 
         // 9. Annex groups, LAST. Selecting an annex directory displaces the
         // eMRTD application, and nothing below needs it back; the dispatcher
-        // restores the master file on its way out.
-        {
+        // restores the master file on its way out. Not after a read that lost
+        // the link: the annex would only meet the same failure.
+        if (!readInterrupted) {
             LibreSCRS::Annex::AnnexContext annexCtx;
             annexCtx.channel = &channel;
             annexCtx.conn = &conn;

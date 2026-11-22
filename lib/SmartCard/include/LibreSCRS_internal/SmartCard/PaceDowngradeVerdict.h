@@ -24,8 +24,8 @@
 ///     tunnel), OR a COMPLETE well-formed read whose parse yields ZERO PACE
 ///     OIDs -> Proceed;
 ///   - >= 1 PACE OID in the SM-authenticated answer -> Downgrade (forged);
-///   - anything else — MAC/integrity failure (surfaced as the channel's
-///     sentinel SWs, never as an accepted status), undecodable, truncated,
+///   - anything else — MAC/integrity failure (an IntegrityFailure from
+///     the channel, never an accepted status), undecodable, truncated,
 ///     not-a-SecurityInfos-SET, empty, or any throw -> Downgrade (fail closed).
 ///
 /// The verdict is a pure function over the reader's outcome detail; the caller

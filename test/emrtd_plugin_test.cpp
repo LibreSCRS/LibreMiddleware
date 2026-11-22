@@ -1280,6 +1280,141 @@ TEST(EmrtdInterfaceActivation, SecurityChecksTrackDataGroupPresence)
         << "active_auth check must be omitted when the document has no DG15";
 }
 
+// --- a read that loses the link keeps what it already read ----------------
+
+namespace {
+using LibreSCRS::SmartCard::TransportError;
+
+// A plain-readable document listing DG1, DG2, DG11 and DG12, whose link fails
+// (kind) from the SELECT of the file `failFid` on; commandsAfterFailure counts
+// what the plugin still sent after that.
+struct LinkFailureRig
+{
+    std::shared_ptr<LdsRigState> lds;
+    int commandsAfterFailure = 0;
+    bool failed = false;
+    std::vector<uint16_t> selected;
+};
+
+std::shared_ptr<LinkFailureRig> installLinkFailure(LibreSCRS::SmartCard::CardSession& session,
+                                                   std::optional<uint16_t> failFid, TransportError::Kind kind)
+{
+    auto rig = std::make_shared<LinkFailureRig>();
+    rig->lds = installLdsRig(session, /*plainLds=*/true, /*plainSod=*/true);
+    // COM: DG1 (61), DG2 (75), DG11 (6B), DG12 (6C)
+    rig->lds->files[0x011E] = {0x60, 0x16, 0x5F, 0x01, 0x04, '0', '1',  '0',  '8',  0x5F, 0x36, 0x06,
+                               '0',  '4',  '0',  '0',  '0',  '0', 0x5C, 0x04, 0x61, 0x75, 0x6B, 0x6C};
+    rig->lds->files[0x0102] = {0x75, 0x00};
+    rig->lds->files[0x010B] = {0x6B, 0x00};
+    rig->lds->files[0x010C] = {0x6C, 0x00};
+    rig->lds->files.erase(0x010E);
+    LibreSCRS::SmartCard::Internal::connectionOf(session).setTransmitFilter(
+        [rig, failFid,
+         kind](const APDUCommand& cmd) -> std::expected<APDUResponse, LibreSCRS::SmartCard::TransportError> {
+            if (rig->failed) {
+                ++rig->commandsAfterFailure;
+                return std::unexpected(TransportError{kind, "scripted: the link is gone"});
+            }
+            if (cmd.ins == 0xA4 && cmd.p1 == 0x02 && cmd.data.size() == 2) {
+                const auto fid = static_cast<uint16_t>((cmd.data[0] << 8) | cmd.data[1]);
+                rig->selected.push_back(fid);
+                if (failFid && *failFid == fid) {
+                    rig->failed = true;
+                    return std::unexpected(TransportError{kind, "scripted: the link is gone"});
+                }
+            }
+            return ldsRigTransmit(*rig->lds, cmd);
+        });
+    return rig;
+}
+
+LibreSCRS::Plugin::ReadResult readWithLinkFailure(std::optional<uint16_t> failFid, TransportError::Kind kind,
+                                                  std::shared_ptr<LinkFailureRig>& rigOut)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    EXPECT_NE(plugin, nullptr);
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
+    rigOut = installLinkFailure(*session, failFid, kind);
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+    EXPECT_TRUE(plugin->canHandleConnection({}, *session));
+    rigOut->failed = false;
+    rigOut->commandsAfterFailure = 0;
+    rigOut->selected.clear();
+    return plugin->readCard(*session);
+}
+} // namespace
+
+TEST(EmrtdPlugin, AChannelFailureMidReadKeepsTheGroupsAlreadyRead)
+{
+    std::shared_ptr<LinkFailureRig> rig;
+    auto rr = readWithLinkFailure(0x010B, TransportError::Kind::IntegrityFailure, rig);
+
+    ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(rr.data.has_value());
+    EXPECT_NE(groupOf(*rr.data, "personal"), nullptr) << "DG1 was read before the link failed";
+    EXPECT_NE(std::ranges::find(rig->selected, 0x0102), rig->selected.end()) << "DG2 was read";
+    EXPECT_EQ(groupOf(*rr.data, "additional"), nullptr);
+    EXPECT_EQ(std::ranges::find(rig->selected, 0x010C), rig->selected.end()) << "DG12 must not be attempted";
+    EXPECT_EQ(fieldText(*rr.data, "security_status", "read_interrupted").value_or(""), "true");
+    EXPECT_EQ(fieldText(*rr.data, "security_status", "read_interrupted_reason").value_or(""), "read.channel-failed");
+    EXPECT_EQ(fieldText(*rr.data, "security_status", "read_interrupted_groups").value_or(""), "DG11, DG12");
+    EXPECT_EQ(fieldText(*rr.data, "security_status", "annex_skipped").value_or(""), "true");
+    EXPECT_EQ(rig->commandsAfterFailure, 0) << "nothing is sent over a link that has failed";
+}
+
+TEST(EmrtdPlugin, AReaderLostMidReadNamesTheReader)
+{
+    std::shared_ptr<LinkFailureRig> rig;
+    auto rr = readWithLinkFailure(0x010B, TransportError::Kind::ReaderUnavailable, rig);
+    ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(rr.data.has_value());
+    EXPECT_EQ(fieldText(*rr.data, "security_status", "read_interrupted_reason").value_or(""), "read.reader-lost");
+}
+
+TEST(EmrtdPlugin, ACardRemovedMidReadNamesTheCard)
+{
+    std::shared_ptr<LinkFailureRig> rig;
+    auto rr = readWithLinkFailure(0x010B, TransportError::Kind::NoCardPresent, rig);
+    ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(rr.data.has_value());
+    EXPECT_EQ(fieldText(*rr.data, "security_status", "read_interrupted_reason").value_or(""), "read.card-removed");
+}
+
+TEST(EmrtdPlugin, ACardRemovedBeforeAnyGroupIsCommunicationError)
+{
+    std::shared_ptr<LinkFailureRig> rig;
+    auto rr = readWithLinkFailure(0x011D, TransportError::Kind::NoCardPresent, rig); // EF.SOD
+    EXPECT_EQ(rr.status, ReadResult::Status::CommunicationError);
+    EXPECT_FALSE(rr.data.has_value());
+    EXPECT_EQ(rr.diagnosticDetail.value_or(""), "scripted: the link is gone");
+    EXPECT_EQ(rig->commandsAfterFailure, 0);
+}
+
+TEST(EmrtdPlugin, ACardAnswerOnOneGroupDoesNotStopTheRead)
+{
+    std::shared_ptr<LinkFailureRig> rig;
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
+    rig = installLinkFailure(*session, std::nullopt, TransportError::Kind::IntegrityFailure);
+    rig->lds->files.erase(0x010B); // the card answers 6A82 for DG11
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    rig->selected.clear();
+
+    auto rr = plugin->readCard(*session);
+
+    ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(rr.data.has_value());
+    EXPECT_NE(std::ranges::find(rig->selected, 0x010C), rig->selected.end()) << "DG12 is still read";
+    EXPECT_FALSE(fieldText(*rr.data, "security_status", "read_interrupted").has_value());
+    EXPECT_FALSE(fieldText(*rr.data, "security_status", "annex_skipped").has_value());
+}
+
 // A card-side status-word refusal of INTERNAL AUTHENTICATE on a PLAIN channel
 // is a policy statement (the contact interface may legitimately SM-gate the
 // protocol), not a clone signal: the active_auth row must read NOT_PERFORMED,
@@ -1869,6 +2004,22 @@ TEST(EmrtdInterfaceActivation, ContactReadWhoseChipRefusesChipAuthIsNotPerformed
     EXPECT_EQ(fieldText(data, "presence", "auth_method").value_or(""), "None (plain read)");
     EXPECT_EQ(read.card->keyAgreements(), 0);
     EXPECT_TRUE(fieldText(data, "personal", "surname").has_value());
+}
+
+TEST(EmrtdPlugin, AReaderErrorDuringChipAuthenticationIsCommunicationError)
+{
+    auto read = readContactDocumentWithChipAuth([](LibreSCRS::Test::CaCardOnTheWire& card) {
+        card.failIns(0x86, LibreSCRS::SmartCard::TransportError{
+                               LibreSCRS::SmartCard::TransportError::Kind::ReaderUnavailable, "scripted: reader gone"});
+    });
+    ASSERT_TRUE(read.rr.has_value());
+
+    EXPECT_EQ(read.rr->status, ReadResult::Status::CommunicationError);
+    EXPECT_FALSE(read.rr->data.has_value()) << "no data group is emitted once the reader failed";
+    const auto& log = read.card->insLog();
+    ASSERT_FALSE(log.empty());
+    EXPECT_EQ(log.back(), 0x86) << "the failed command is the last one the card saw";
+    EXPECT_EQ(read.card->keyAgreements(), 0);
 }
 
 TEST(EmrtdInterfaceActivation, ContactlessWithProviderStillActivatesSm)

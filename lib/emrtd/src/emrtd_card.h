@@ -9,7 +9,9 @@
 
 #include "emrtd_types.h"
 #include <apdu.h>
+#include <LibreSCRS/SmartCard/TransportError.h>
 
+#include <expected>
 #include <optional>
 #include <vector>
 
@@ -44,12 +46,13 @@ class EMRTDCard
 public:
     explicit EMRTDCard(LibreSCRS::SecureChannel::ISecureChannel& channel);
 
-    std::vector<int> readCOM();
+    /// A link failure (TransportError) is the error; anything the card answers is a value.
+    [[nodiscard]] std::expected<std::vector<int>, LibreSCRS::SmartCard::TransportError> readCOM();
     /// Reads EF.SOD (FID 011D) and returns raw bytes for PA processing
-    std::optional<std::vector<uint8_t>> readSOD();
+    [[nodiscard]] std::expected<std::optional<std::vector<uint8_t>>, LibreSCRS::SmartCard::TransportError> readSOD();
 
     /// Reads a data group with access-denied handling for EAC-protected DGs
-    DGReadResult readDataGroupSafe(int dgNumber);
+    [[nodiscard]] std::expected<DGReadResult, LibreSCRS::SmartCard::TransportError> readDataGroupSafe(int dgNumber);
 
     /// Parses DG16 (persons to notify) from raw bytes
     static std::vector<ContactPerson> parseDG16(const std::vector<uint8_t>& raw);
@@ -57,7 +60,8 @@ public:
 private:
     LibreSCRS::SecureChannel::ISecureChannel& channel;
 
-    std::optional<std::vector<uint8_t>> readFile(uint16_t fid, bool skipSelect = false);
+    using FileRead = std::expected<std::optional<std::vector<uint8_t>>, LibreSCRS::SmartCard::TransportError>;
+    FileRead readFile(uint16_t fid, bool skipSelect = false);
 };
 
 } // namespace emrtd

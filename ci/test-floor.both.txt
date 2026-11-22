@@ -26,10 +26,10 @@ DecipherTypesTest 3
 DocpParserTests 4
 ECSigningTests 9
 EMRTDCryptoTests 264
-EMRTDPluginTests 76
+EMRTDPluginTests 82
 EMRTDTests 20
 EfDirTests 3
-EmrtdCardReadTests 3
+EmrtdCardReadTests 6
 HttpClientTests 3
 JAdESModuleTests 12
 JcsTests 12

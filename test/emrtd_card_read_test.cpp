@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -89,9 +90,10 @@ TEST(EmrtdCardRead, DataGroupPastOffset7FFFIsReadWithTheOddIns)
 
     const auto read = card.readDataGroupSafe(2);
 
-    ASSERT_EQ(read.status, emrtd::DGReadStatus::OK);
-    ASSERT_EQ(read.data.size(), chip.file.size());
-    EXPECT_TRUE(read.data == chip.file) << "the tail past 0x7FFF must be the file's tail, not its beginning again";
+    ASSERT_TRUE(read.has_value());
+    ASSERT_EQ(read->status, emrtd::DGReadStatus::OK);
+    ASSERT_EQ(read->data.size(), chip.file.size());
+    EXPECT_TRUE(read->data == chip.file) << "the tail past 0x7FFF must be the file's tail, not its beginning again";
 }
 
 TEST(EmrtdCardRead, AFileCutShortByAnErrorIsNoFile)
@@ -102,7 +104,9 @@ TEST(EmrtdCardRead, AFileCutShortByAnErrorIsNoFile)
     channel.transmitHandler = [&chip](const APDUCommand& cmd) { return chip.answer(cmd); };
     emrtd::EMRTDCard card(channel);
 
-    EXPECT_EQ(card.readDataGroupSafe(2).status, emrtd::DGReadStatus::ERROR);
+    const auto read = card.readDataGroupSafe(2);
+    ASSERT_TRUE(read.has_value());
+    EXPECT_EQ(read->status, emrtd::DGReadStatus::ERROR);
 }
 
 TEST(EmrtdCardRead, AFileEndingBeforeItsDeclaredLengthIsNoFile)
@@ -113,5 +117,60 @@ TEST(EmrtdCardRead, AFileEndingBeforeItsDeclaredLengthIsNoFile)
     channel.transmitHandler = [&chip](const APDUCommand& cmd) { return chip.answer(cmd); };
     emrtd::EMRTDCard card(channel);
 
-    EXPECT_EQ(card.readDataGroupSafe(2).status, emrtd::DGReadStatus::ERROR);
+    const auto read = card.readDataGroupSafe(2);
+    ASSERT_TRUE(read.has_value());
+    EXPECT_EQ(read->status, emrtd::DGReadStatus::ERROR);
+}
+
+namespace {
+using LibreSCRS::SmartCard::TransportError;
+
+void breakAfter(FakeChannel& channel, TransportError::Kind kind, int answerFirst)
+{
+    auto seen = std::make_shared<int>(0);
+    channel.onTransmitCallback = [&channel, kind, answerFirst, seen] {
+        if (++*seen > answerFirst)
+            channel.transmitFailure = TransportError{kind, "scripted link failure"};
+    };
+}
+} // namespace
+
+TEST(EmrtdCardRead, ALinkFailureOnADataGroupIsTheError)
+{
+    FakeChannel channel(LibreSCRS::SmartCard::AppletAid{}, ChannelState::Open, true);
+    breakAfter(channel, TransportError::Kind::IntegrityFailure, 1); // SELECT answers, READ BINARY fails
+    emrtd::EMRTDCard card(channel);
+
+    const auto read = card.readDataGroupSafe(2);
+
+    ASSERT_FALSE(read.has_value());
+    EXPECT_EQ(read.error().kind, TransportError::Kind::IntegrityFailure);
+}
+
+TEST(EmrtdCardRead, ALinkFailureOnTheComAndSodIsTheError)
+{
+    FakeChannel channel(LibreSCRS::SmartCard::AppletAid{}, ChannelState::Open, true);
+    breakAfter(channel, TransportError::Kind::NoCardPresent, 0);
+    emrtd::EMRTDCard card(channel);
+
+    const auto com = card.readCOM();
+    ASSERT_FALSE(com.has_value());
+    EXPECT_EQ(com.error().kind, TransportError::Kind::NoCardPresent);
+    const auto sod = card.readSOD();
+    ASSERT_FALSE(sod.has_value());
+    EXPECT_EQ(sod.error().kind, TransportError::Kind::NoCardPresent);
+}
+
+TEST(EmrtdCardRead, ACardAnswerIsAValueNotAnError)
+{
+    FakeChannel channel(LibreSCRS::SmartCard::AppletAid{}, ChannelState::Open, true);
+    channel.transmitHandler = [](const APDUCommand&) { return APDUResponse{{}, 0x6A, 0x82}; };
+    emrtd::EMRTDCard card(channel);
+
+    const auto read = card.readDataGroupSafe(11);
+    ASSERT_TRUE(read.has_value());
+    EXPECT_EQ(read->status, emrtd::DGReadStatus::NOT_PRESENT);
+    const auto sod = card.readSOD();
+    ASSERT_TRUE(sod.has_value());
+    EXPECT_FALSE(sod->has_value());
 }

@@ -121,7 +121,9 @@ TEST(PACEHardwareTest, PaceAuthenticateAndReadCOM)
     emrtd::EMRTDCard card(channel);
 
     // After PACE + applet selection, read COM (EF.COM lists available DGs)
-    auto dgList = card.readCOM();
+    const auto com = card.readCOM();
+    ASSERT_TRUE(com.has_value()) << "COM read failed: " << com.error().detail;
+    const auto& dgList = *com;
     EXPECT_FALSE(dgList.empty()) << "COM should list at least one data group";
 
     // DG1 (MRZ) and DG2 (photo) are mandatory in all passports
@@ -150,8 +152,9 @@ TEST(PACEHardwareTest, ReadAndParseDG1)
 
     // Read DG1 (MRZ data)
     const auto dg1 = card.readDataGroupSafe(1);
-    ASSERT_EQ(dg1.status, emrtd::DGReadStatus::OK) << "Failed to read DG1";
-    const auto& dg1Raw = dg1.data;
+    ASSERT_TRUE(dg1.has_value()) << "DG1 read failed: " << dg1.error().detail;
+    ASSERT_EQ(dg1->status, emrtd::DGReadStatus::OK) << "Failed to read DG1";
+    const auto& dg1Raw = dg1->data;
     EXPECT_GT(dg1Raw.size(), 10u) << "DG1 too small";
 
     // Dump raw DG1 for debugging
@@ -197,8 +200,9 @@ TEST(PACEHardwareTest, ReadDG2Photo)
     emrtd::EMRTDCard card(channel);
 
     const auto dg2 = card.readDataGroupSafe(2);
-    ASSERT_EQ(dg2.status, emrtd::DGReadStatus::OK) << "Failed to read DG2";
-    const auto& dg2Raw = dg2.data;
+    ASSERT_TRUE(dg2.has_value()) << "DG2 read failed: " << dg2.error().detail;
+    ASSERT_EQ(dg2->status, emrtd::DGReadStatus::OK) << "Failed to read DG2";
+    const auto& dg2Raw = dg2->data;
     EXPECT_GT(dg2Raw.size(), 100u) << "DG2 too small for a photo";
 
     std::map<int, std::vector<uint8_t>> rawDGs;
