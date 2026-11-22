@@ -1364,6 +1364,61 @@ TEST(EmrtdPlugin, AChannelFailureMidReadKeepsTheGroupsAlreadyRead)
     EXPECT_EQ(rig->commandsAfterFailure, 0) << "nothing is sent over a link that has failed";
 }
 
+namespace {
+// The link-failure document again, now with a security object that covers
+// DG1, DG2 and DG11, signed the way a real one is, and the data groups it
+// hashes: the groups read before a break pass their integrity check.
+LibreSCRS::Plugin::ReadResult readSignedDocument(std::optional<uint16_t> failFid,
+                                                 std::shared_ptr<LinkFailureRig>& rigOut)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    EXPECT_NE(plugin, nullptr);
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
+    rigOut = installLinkFailure(*session, failFid, TransportError::Kind::NoCardPresent);
+    std::map<int, std::vector<uint8_t>> groups = LibreSCRS::Test::sodDataGroups();
+    groups[2] = rigOut->lds->files[0x0102];
+    groups[11] = rigOut->lds->files[0x010B];
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+    rigOut->lds->files[0x011D] = sodFixture(LibreSCRS::Test::makeSodOverGroups(ml, 0, groups));
+    rigOut->lds->files[0x0101] = groups.at(1);
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+    EXPECT_TRUE(plugin->canHandleConnection({}, *session));
+    rigOut->failed = false;
+    rigOut->selected.clear();
+    return plugin->readCard(*session);
+}
+} // namespace
+
+// Read in full, the signed document passes integrity: the baseline the
+// interrupted case below is measured against.
+TEST(EmrtdPlugin, AFullyReadSignedDocumentPassesIntegrity)
+{
+    std::shared_ptr<LinkFailureRig> rig;
+    auto rr = readSignedDocument(std::nullopt, rig);
+    ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(rr.data.has_value());
+    EXPECT_FALSE(fieldText(*rr.data, "security_status", "read_interrupted").has_value());
+    EXPECT_EQ(fieldText(*rr.data, "security_status", "overall_integrity").value_or(""), "PASSED");
+}
+
+// A read that stopped before the last group cannot claim the document's
+// integrity, though every group it did read was intact: the verdict is
+// NOT_PERFORMED, and the rows for the groups read still say PASSED.
+TEST(EmrtdPlugin, AnInterruptedReadDoesNotPassIntegrity)
+{
+    std::shared_ptr<LinkFailureRig> rig;
+    auto rr = readSignedDocument(0x010B, rig);
+    ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(rr.data.has_value());
+    ASSERT_EQ(fieldText(*rr.data, "security_status", "read_interrupted").value_or(""), "true");
+    const auto dg2 = checkIndexOf(*rr.data, "security_status", "pa_dg2_hash");
+    ASSERT_TRUE(dg2.has_value()) << "DG2 was read and checked before the break";
+    EXPECT_EQ(checkField(*rr.data, "security_status", *dg2, "status").value_or(""), "PASSED");
+    EXPECT_EQ(fieldText(*rr.data, "security_status", "overall_integrity").value_or(""), "NOT_PERFORMED");
+}
+
 TEST(EmrtdPlugin, AReaderLostMidReadNamesTheReader)
 {
     std::shared_ptr<LinkFailureRig> rig;

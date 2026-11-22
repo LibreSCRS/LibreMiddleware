@@ -1166,6 +1166,13 @@ private:
             }
         }
 
+        // An interrupted read verified only the groups it got to, so it cannot
+        // claim the document's integrity: the rows for those groups keep their
+        // PASSED, the aggregate drops to NOT_PERFORMED. A FAILED stays FAILED.
+        if (readInterrupted && secStatus.overallIntegrity == LibreSCRS::Plugin::SecurityCheck::Status::Passed) {
+            secStatus.overallIntegrity = LibreSCRS::Plugin::SecurityCheck::Status::NotPerformed;
+        }
+
         // 8. Emit security_status group
         {
             LibreSCRS::Plugin::CardFieldGroup g;

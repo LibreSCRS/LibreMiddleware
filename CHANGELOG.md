@@ -312,8 +312,10 @@ Notable user-visible changes per release. Format follows
   carries `read_interrupted`, `read_interrupted_reason`
   (`read.channel-failed`, `read.card-removed` or `read.reader-lost`),
   `read_interrupted_groups` and `annex_skipped`: keys that a host translates.
-  A link failure before any group is read is now `CommunicationError`, not an
-  empty `Ok` result; a host must handle it.
+  Such a read does not claim the document's integrity: `overall_integrity`
+  is `NOT_PERFORMED`, while the checks of the groups that were read keep
+  their own result. A link failure before any group is read is now
+  `CommunicationError`, not an empty `Ok` result; a host must handle it.
 
 - **The card plugins reach the card only through public `CardSession`
   calls.** A plugin no longer reaches into the session's PC/SC connection,

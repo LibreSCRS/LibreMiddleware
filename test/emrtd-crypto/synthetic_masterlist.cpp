@@ -782,8 +782,8 @@ constexpr int kDataGroup1Number = 1;
 constexpr uint8_t kDataGroup1[] = {0x61, 0x03, 0x5F, 0x01, 0x00};
 
 /// LDSSecurityObject ::= SEQUENCE { version, hashAlgorithm, dataGroupHashValues }
-/// One data group is enough; nothing here is about the number of them.
-std::vector<uint8_t> buildLdsSecurityObject()
+/// over @p groups (number -> the exact bytes hashed, SHA-256).
+std::vector<uint8_t> buildLdsSecurityObject(const std::map<int, std::vector<uint8_t>>& groups)
 {
     static constexpr uint8_t kSha256Algorithm[] = {0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
                                                    0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00};
@@ -791,12 +791,15 @@ std::vector<uint8_t> buildLdsSecurityObject()
     std::vector<uint8_t> body{0x02, 0x01, 0x00}; // version v0
     body.insert(body.end(), std::begin(kSha256Algorithm), std::end(kSha256Algorithm));
 
-    std::vector<uint8_t> hashEntry{0x02, 0x01, static_cast<uint8_t>(kDataGroup1Number)};
-    const std::vector<uint8_t> digest = sha256(kDataGroup1, sizeof(kDataGroup1));
-    const std::vector<uint8_t> digestOctets = derWrap(0x04, digest);
-    hashEntry.insert(hashEntry.end(), digestOctets.begin(), digestOctets.end());
-
-    const std::vector<uint8_t> hashValues = derWrap(0x30, derWrap(0x30, hashEntry));
+    std::vector<uint8_t> entries;
+    for (const auto& [number, bytes] : groups) {
+        std::vector<uint8_t> hashEntry{0x02, 0x01, static_cast<uint8_t>(number)};
+        const std::vector<uint8_t> digestOctets = derWrap(0x04, sha256(bytes.data(), bytes.size()));
+        hashEntry.insert(hashEntry.end(), digestOctets.begin(), digestOctets.end());
+        const std::vector<uint8_t> entry = derWrap(0x30, hashEntry);
+        entries.insert(entries.end(), entry.begin(), entry.end());
+    }
+    const std::vector<uint8_t> hashValues = derWrap(0x30, entries);
     body.insert(body.end(), hashValues.begin(), hashValues.end());
 
     return derWrap(0x30, body);
@@ -1042,7 +1045,21 @@ std::vector<uint8_t> makeSod(const SyntheticMasterList& ml, int anchorIndex, con
                                .keyUsage = "critical,digitalSignature",
                                .ekuOid = dscEku,
                                .notAfter = dscNotAfter});
-    return signCms(dsc, buildLdsSecurityObject(), nullptr);
+    return signCms(dsc, buildLdsSecurityObject(ldsDataGroups()), nullptr);
+}
+
+std::vector<uint8_t> makeSodOverGroups(const SyntheticMasterList& ml, int anchorIndex,
+                                       const std::map<int, std::vector<uint8_t>>& groups)
+{
+    const Cert anchor = anchorCert(ml, anchorIndex);
+    const Cert dsc = makeCert({.commonName = "Synthetic Document Signer " + randomHex(4),
+                               .ca = false,
+                               .issuer = &anchor,
+                               .issuerName = nullptr,
+                               .keyUsage = "critical,digitalSignature",
+                               .ekuOid = {},
+                               .notAfter = {}});
+    return signCms(dsc, buildLdsSecurityObject(groups), nullptr);
 }
 
 std::vector<uint8_t> makeForgedSod()
@@ -1054,7 +1071,7 @@ std::vector<uint8_t> makeForgedSod()
                                .keyUsage = "critical,digitalSignature",
                                .ekuOid = {},
                                .notAfter = {}});
-    return signCms(dsc, buildLdsSecurityObject(), nullptr);
+    return signCms(dsc, buildLdsSecurityObject(ldsDataGroups()), nullptr);
 }
 
 std::vector<uint8_t> makeSodWithImpersonatedIssuer(const SyntheticMasterList& ml, int anchorIndex)
@@ -1071,7 +1088,7 @@ std::vector<uint8_t> makeSodWithImpersonatedIssuer(const SyntheticMasterList& ml
                                .keyUsage = "critical,digitalSignature",
                                .ekuOid = {},
                                .notAfter = {}});
-    return signCms(dsc, buildLdsSecurityObject(), nullptr);
+    return signCms(dsc, buildLdsSecurityObject(ldsDataGroups()), nullptr);
 }
 
 SyntheticSodWithImpostor makeSodWithImpostorPrependedToCertificateBag(const SyntheticMasterList& ml, int anchorIndex)
@@ -1106,7 +1123,7 @@ SyntheticSodWithImpostor makeSodWithImpostorPrependedToCertificateBag(const Synt
     // Signed first and planted afterwards, which is the order the attack
     // happens in: the document is genuine when it leaves the issuing state,
     // and what is added to the bag after that cannot disturb the signature.
-    out.der = addToCertificateBag(signCms(dsc, buildLdsSecurityObject(), nullptr), impostor.x.get());
+    out.der = addToCertificateBag(signCms(dsc, buildLdsSecurityObject(ldsDataGroups()), nullptr), impostor.x.get());
     out.dgs = ldsDataGroups();
 
     const std::vector<std::vector<uint8_t>> bag = certificateBagOf(out.der);

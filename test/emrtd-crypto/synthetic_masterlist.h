@@ -283,6 +283,12 @@ struct SyntheticCscaRotation
 ///       is about what a data group contains.
 [[nodiscard]] std::map<int, std::vector<uint8_t>> sodDataGroups();
 
+/// @brief A SOD like makeSod(ml, anchorIndex), over @p groups instead of the
+///        one data group sodDataGroups() holds: number -> the exact bytes the
+///        object hashes. For a document whose read can stop between groups.
+[[nodiscard]] std::vector<uint8_t> makeSodOverGroups(const SyntheticMasterList& ml, int anchorIndex,
+                                                     const std::map<int, std::vector<uint8_t>>& groups);
+
 /// @brief A SOD signed by a SELF-SIGNED DSC belonging to no anchor at all — the
 ///        forgery. Its issuer equals its own subject, so the DN prefilter
 ///        rejects it BEFORE any chain is built.

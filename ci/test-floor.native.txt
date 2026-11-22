@@ -23,7 +23,7 @@ DecipherTypesTest 3
 DocpParserTests 4
 ECSigningTests 9
 EMRTDCryptoTests 264
-EMRTDPluginTests 82
+EMRTDPluginTests 84
 EMRTDTests 20
 EfDirTests 3
 EmrtdCardReadTests 6
