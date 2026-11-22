@@ -6,6 +6,7 @@
 #include <LibreSCRS/Logging.h>
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <mutex>
 #include <stdexcept>
@@ -934,4 +935,198 @@ TEST_F(MonitorTestFixture, ThrowingSubscribersReportThroughTheLogSink)
     };
     EXPECT_TRUE(has("event callback threw: event subscriber blew up")) << lines.size() << " line(s) captured";
     EXPECT_TRUE(has("reader-list callback threw unknown exception")) << lines.size() << " line(s) captured";
+}
+
+// pcsc-lite ignores an SCardCancel that reaches a context not yet inside
+// SCardGetStatusChange. A stop that lands between the poll loop's stop check
+// and the wait must still end the poll instead of waiting out the timeout.
+TEST_F(MonitorTestFixture, StopJustBeforeTheWaitSurvivesADroppedCancel)
+{
+    using namespace std::chrono_literals;
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    auto* mockPtr = mock.get();
+    mock->setReaders({"Reader A"});
+    mock->setDropCancelOutsideWait(true);
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false}); // PnP check
+    mock->pushStatusChange({SCARD_S_SUCCESS, {}, false});                    // initial probe
+    mock->pushStatusChange({SCARD_S_SUCCESS, {}, true});                     // the long wait
+
+    std::atomic<bool> inWindow{false};
+    auto counts = counters;
+    mock->setBeforeBlockingWaitHook([&inWindow, counts] {
+        inWindow = true;
+        // Hold the poll thread past the stop check until stop has cancelled.
+        const auto until = std::chrono::steady_clock::now() + 2s;
+        while (counts->cancelCount.load() == 0 && std::chrono::steady_clock::now() < until)
+            std::this_thread::sleep_for(1ms);
+    });
+
+    Monitor monitor(std::move(mock));
+    const auto id = monitor.subscribe([](const MonitorEvent&) {});
+
+    const auto windowDeadline = std::chrono::steady_clock::now() + 2s;
+    while (!inWindow.load() && std::chrono::steady_clock::now() < windowDeadline)
+        std::this_thread::sleep_for(1ms);
+    EXPECT_TRUE(inWindow.load()) << "poll thread never reached the wait";
+
+    std::atomic<bool> stopped{false};
+    std::thread stopper([&] {
+        monitor.unsubscribe(id);
+        stopped = true;
+    });
+    const auto stopDeadline = std::chrono::steady_clock::now() + 3s;
+    while (!stopped.load() && std::chrono::steady_clock::now() < stopDeadline)
+        std::this_thread::sleep_for(1ms);
+    const bool stoppedInTime = stopped.load();
+    if (!stoppedInTime)
+        mockPtr->forceReleaseBlockingWait(); // let the join finish so the test fails, not hangs
+    stopper.join();
+
+    EXPECT_TRUE(stoppedInTime) << "stop lost its only cancel and the poll stayed in the wait";
+    EXPECT_GE(counters->droppedCancelCount.load(), 1) << "the stop did not land in the window";
+}
+
+namespace {
+
+template <typename Pred>
+bool waitFor(Pred pred, std::chrono::milliseconds limit)
+{
+    const auto deadline = std::chrono::steady_clock::now() + limit;
+    while (!pred()) {
+        if (std::chrono::steady_clock::now() >= deadline)
+            return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return true;
+}
+
+// What a subscriber's callback shares with the test. Held by shared_ptr so a
+// callback stuck on a failing build outlives the test body.
+struct SelfStop
+{
+    std::atomic<Monitor*> monitor{nullptr};
+    std::atomic<Monitor::SubscriptionId> id{0};
+    std::atomic<bool> idReady{false};
+    std::atomic<bool> entered{false};
+    std::atomic<bool> returned{false};
+    std::atomic<int> secondEvents{0};
+    std::atomic<int> secondReaderLists{0};
+};
+
+} // namespace
+
+// The last subscriber drops its subscription from its own callback, on the
+// poll thread. That stop cannot wait for the poll thread to return; the
+// thread ends on its own without parking in the first-reader wait, and the
+// next subscriber gets a running monitor again.
+TEST_F(MonitorTestFixture, LastSubscriberUnsubscribesInsideItsCallback)
+{
+    using namespace std::chrono_literals;
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    auto* mockPtr = mock.get();
+    mock->setReaders({});
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false}); // PnP check
+
+    auto shared = std::make_shared<SelfStop>();
+    auto monitor = std::make_unique<Monitor>(std::move(mock));
+    shared->monitor = monitor.get();
+    shared->id = monitor->subscribe([](const MonitorEvent&) {},
+                                    [shared](const std::vector<std::string>&) {
+                                        if (shared->entered.exchange(true))
+                                            return;
+                                        while (!shared->idReady.load())
+                                            std::this_thread::yield();
+                                        shared->monitor.load()->unsubscribe(shared->id.load());
+                                        shared->returned = true;
+                                    });
+    shared->idReady = true;
+
+    if (!waitFor([&] { return shared->returned.load(); }, 3s)) {
+        ADD_FAILURE() << "unsubscribe() from the poll thread waited for the poll thread";
+        (void)monitor.release(); // its poll thread never returns; destroying it would hang the suite
+        return;
+    }
+    EXPECT_TRUE(waitFor([&] { return counters->releaseContextCount.load() >= 1; }, 2s))
+        << "the stopped poll thread did not end on its own";
+    EXPECT_EQ(counters->getStatusChangeCount.load(), 1) << "the stopped poll thread entered the first-reader wait";
+
+    mockPtr->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false}); // PnP check
+    mockPtr->pushStatusChange({SCARD_S_SUCCESS, {}, true});                     // first-reader wait
+    monitor->subscribe([](const MonitorEvent&) {},
+                       [shared](const std::vector<std::string>&) { ++shared->secondReaderLists; });
+    EXPECT_TRUE(waitFor([&] { return shared->secondReaderLists.load() >= 1; }, 2s))
+        << "the next subscriber got no poll thread";
+    monitor.reset();
+    EXPECT_EQ(counters->releaseContextCount.load(), counters->establishContextCount.load());
+}
+
+// A subscriber that drops its subscription and subscribes again inside its
+// callback keeps the poll thread it runs on: the new subscription gets the
+// events that follow.
+TEST_F(MonitorTestFixture, ResubscribeInsideTheCallbackKeepsThePollThread)
+{
+    using namespace std::chrono_literals;
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    mock->setReaders({"Reader A"});
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false}); // PnP check
+    mock->pushStatusChange(
+        {SCARD_S_SUCCESS, {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED, 0 /* PnP unchanged */}, false}); // probe
+    mock->pushStatusChange({SCARD_S_SUCCESS, {}, true});                                               // the long wait
+
+    auto shared = std::make_shared<SelfStop>();
+    auto monitor = std::make_unique<Monitor>(std::move(mock));
+    shared->monitor = monitor.get();
+    shared->id = monitor->subscribe([](const MonitorEvent&) {},
+                                    [shared](const std::vector<std::string>&) {
+                                        if (shared->entered.exchange(true))
+                                            return;
+                                        while (!shared->idReady.load())
+                                            std::this_thread::yield();
+                                        Monitor* m = shared->monitor.load();
+                                        m->unsubscribe(shared->id.load());
+                                        m->subscribe([shared](const MonitorEvent& e) {
+                                            if (e.type == MonitorEvent::Type::CardInserted)
+                                                ++shared->secondEvents;
+                                        });
+                                        shared->returned = true;
+                                    });
+    shared->idReady = true;
+
+    if (!waitFor([&] { return shared->returned.load(); }, 3s)) {
+        ADD_FAILURE() << "unsubscribe() or subscribe() from the poll thread waited for the poll thread";
+        (void)monitor.release(); // its poll thread never returns; destroying it would hang the suite
+        return;
+    }
+    EXPECT_TRUE(waitFor([&] { return shared->secondEvents.load() == 1; }, 2s))
+        << "the subscription made inside the callback got no event";
+    EXPECT_EQ(counters->establishContextCount.load(), 1) << "the poll thread was replaced";
+    monitor.reset();
+    EXPECT_EQ(counters->releaseContextCount.load(), counters->establishContextCount.load());
+}
+
+// A release that lands before listReaders reaches its wait is kept.
+TEST(MockPCSCScanProviderTest, ListReadersReleaseBeforeTheWaitIsKept)
+{
+    using namespace std::chrono_literals;
+    auto counters = std::make_shared<MockCounters>();
+    MockPCSCScanProvider mock(counters);
+    mock.setReaders({"Reader A"});
+    mock.setListReadersBlocking(true);
+    mock.releaseListReadersBlock();
+
+    std::atomic<bool> returned{false};
+    std::thread caller([&] {
+        DWORD size = 0;
+        mock.listReaders(0, nullptr, nullptr, &size);
+        returned = true;
+    });
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (!returned.load() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(1ms);
+    const bool returnedInTime = returned.load();
+    if (!returnedInTime)
+        mock.releaseListReadersBlock();
+    caller.join();
+
+    EXPECT_TRUE(returnedInTime) << "the early release was lost and listReaders blocked";
 }

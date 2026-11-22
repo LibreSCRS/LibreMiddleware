@@ -9,6 +9,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -24,6 +25,7 @@ struct MockCounters
     std::atomic<int> listReadersCount{0};
     std::atomic<int> getStatusChangeCount{0};
     std::atomic<int> cancelCount{0};
+    std::atomic<int> droppedCancelCount{0};
 };
 
 class MockPCSCScanProvider : public IPCSCScanProvider
@@ -74,19 +76,53 @@ public:
     /// acts on the service (e.g. a draining unsubscribe).
     void setListReadersBlocking(bool b)
     {
-        std::lock_guard<std::mutex> lock(mtx);
-        listReadersBlocking = b;
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            listReadersBlocking = b;
+        }
+        if (b) {
+            std::lock_guard<std::mutex> lock(listReadersBlockMtx);
+            listReadersReleased = false;
+        }
     }
 
-    /// @brief Release a `listReaders` call previously blocked by
-    /// `setListReadersBlocking(true)`. No-op if no call is currently waiting.
+    /// @brief Release a `listReaders` call blocked by
+    /// `setListReadersBlocking(true)`. A release that lands before the call
+    /// reaches its wait is kept, so that call does not block.
     void releaseListReadersBlock()
     {
         {
             std::lock_guard<std::mutex> lock(listReadersBlockMtx);
-            listReadersBlocked = false;
+            listReadersReleased = true;
         }
         listReadersBlockCv.notify_all();
+    }
+
+    /// @brief Model pcsc-lite: a cancel that arrives while no blocking
+    /// status-change is inside its wait does nothing.
+    void setDropCancelOutsideWait(bool b)
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        dropCancelOutsideWait = b;
+    }
+
+    /// @brief Runs on the polling thread just before a blocking
+    /// status-change enters its wait, so a test can act in that window.
+    void setBeforeBlockingWaitHook(std::function<void()> hook)
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        beforeBlockingWait = std::move(hook);
+    }
+
+    /// @brief Ends a blocking status-change wait regardless of the cancel
+    /// model, so a failing test can still join the polling thread.
+    void forceReleaseBlockingWait()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            forceRelease = true;
+        }
+        blockCv.notify_all();
     }
 
     void pushStatusChange(StatusChangeAction action)
@@ -137,9 +173,10 @@ public:
         }
 
         if (shouldBlock) {
+            // Waits for a flag only the releaser sets, so a release that lands
+            // before this point is not lost.
             std::unique_lock<std::mutex> waitLock(listReadersBlockMtx);
-            listReadersBlocked = true;
-            listReadersBlockCv.wait(waitLock, [this] { return !listReadersBlocked; });
+            listReadersBlockCv.wait(waitLock, [this] { return listReadersReleased; });
         }
 
         std::lock_guard<std::mutex> lock(mtx);
@@ -194,15 +231,22 @@ public:
         }
 
         if (action.blocking) {
-            std::unique_lock<std::mutex> lock(blockMtx);
-            blocked = true;
-            blockCv.wait(lock, [this] { return !blocked; });
-
-            std::lock_guard<std::mutex> lock2(mtx);
-            if (cancelled) {
-                cancelled = false;
-                return SCARD_E_CANCELLED;
+            std::function<void()> hook;
+            {
+                std::lock_guard<std::mutex> lock(mtx);
+                hook = beforeBlockingWait;
             }
+            if (hook)
+                hook();
+            // Only cancel() ends this wait. Judged under the lock cancel() sets
+            // the flag under, so a cancel that lands before the wait begins is
+            // not lost -- unless the test asked for pcsc-lite's dropping model.
+            std::unique_lock<std::mutex> lock(mtx);
+            inBlockingWait = true;
+            blockCv.wait(lock, [this] { return cancelled || forceRelease; });
+            inBlockingWait = false;
+            cancelled = false;
+            return SCARD_E_CANCELLED;
         }
 
         for (DWORD i = 0; i < cReaders && i < action.eventStates.size(); i++) {
@@ -223,14 +267,14 @@ public:
     {
         {
             std::lock_guard<std::mutex> lock(mtx);
-            cancelled = true;
             counters->cancelCount++;
+            if (dropCancelOutsideWait && !inBlockingWait) {
+                counters->droppedCancelCount++;
+                return SCARD_S_SUCCESS;
+            }
+            cancelled = true;
         }
-        {
-            std::lock_guard<std::mutex> lock(blockMtx);
-            blocked = false;
-            blockCv.notify_all();
-        }
+        blockCv.notify_all();
         return SCARD_S_SUCCESS;
     }
 
@@ -244,19 +288,21 @@ private:
     LONG establishContextRv = SCARD_S_SUCCESS;
     std::vector<StatusChangeAction> statusChangeQueue;
 
-    std::mutex blockMtx;
-    std::condition_variable blockCv;
-    bool blocked = false;
+    std::condition_variable blockCv; // waits on mtx
     bool cancelled = false;
+    bool inBlockingWait = false;
+    bool forceRelease = false;
+    bool dropCancelOutsideWait = false;
+    std::function<void()> beforeBlockingWait;
 
     // Separate condvar pair for `listReaders` blocking — see
     // setListReadersBlocking / listReaders / releaseListReadersBlock.
-    // Distinct from `blockMtx`/`blockCv` so a test can independently
+    // Distinct from `blockCv` so a test can independently
     // gate listReaders vs getStatusChange.
     std::mutex listReadersBlockMtx;
     std::condition_variable listReadersBlockCv;
     bool listReadersBlocking = false;
-    bool listReadersBlocked = false;
+    bool listReadersReleased = false;
 };
 
 } // namespace LibreSCRS::SmartCard::Internal

@@ -11,6 +11,7 @@
 #include <smartcard/monitor_event.h>
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -54,8 +55,17 @@ private:
         ReaderListCallback onReaders;
     };
 
+    // IfIdle: stop only if the monitor still has no subscriber once the
+    // thread state is held, so a first subscriber that arrived after the
+    // last unsubscribe keeps its thread.
+    enum class Stop {
+        Always,
+        IfIdle,
+    };
+
     void startThread();
-    void stopThread();
+    void stopThread(Stop when);
+    void cancelAndJoin();
     void run();
 
     LONG establishContext();
@@ -93,6 +103,11 @@ private:
     // assignment (which would call std::terminate).
     mutable std::mutex threadMtx;
     std::thread monitorThread;
+
+    // Set when run() has returned; lets cancelAndJoin() stop repeating the cancel.
+    std::mutex exitMtx;
+    std::condition_variable exitCv;
+    bool runReturned = false;
 };
 
 } // namespace LibreSCRS::SmartCard::Internal

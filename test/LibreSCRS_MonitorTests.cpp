@@ -633,3 +633,109 @@ TEST(MonitorServiceTest, SourceRefusalArrivesAsOneErrorEvent)
     EXPECT_FALSE(events[0].diagnosticDetail->empty());
     EXPECT_EQ(counters->establishContextCount.load(), 1);
 }
+
+namespace {
+
+template <typename Pred>
+bool waitFor(Pred pred, std::chrono::milliseconds limit)
+{
+    const auto deadline = std::chrono::steady_clock::now() + limit;
+    while (!pred()) {
+        if (std::chrono::steady_clock::now() >= deadline)
+            return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return true;
+}
+
+// What a subscriber's callback shares with the test. Held by shared_ptr so a
+// callback stuck on a failing build outlives the test body.
+struct SelfUnsubscribe
+{
+    std::atomic<MonitorService*> service{nullptr};
+    std::optional<MonitorService::SubscriptionId> id;
+    std::atomic<bool> idReady{false};
+    std::atomic<bool> entered{false};
+    std::atomic<bool> returned{false};
+    std::atomic<int> secondSubscriberEvents{0};
+    std::atomic<bool> destroyed{false};
+};
+
+// Subscribes a callback that drops the last subscription from inside itself
+// on the first event of @p kind, which MonitorService delivers on the poll
+// thread. Then checks that unsubscribe returned, that a new subscriber gets
+// an event of that kind, and that the service shuts down.
+void lastSubscriberUnsubscribesInside(std::shared_ptr<MonitorService> monitor, MonitorEvent::Kind kind)
+{
+    using namespace std::chrono_literals;
+    auto shared = std::make_shared<SelfUnsubscribe>();
+    shared->service = monitor.get();
+    shared->id = monitor->subscribe([shared, kind](const MonitorEvent& e) {
+        if (e.kind != kind || shared->entered.exchange(true))
+            return;
+        while (!shared->idReady.load())
+            std::this_thread::yield();
+        shared->service.load()->unsubscribe(*shared->id);
+        shared->returned = true;
+    });
+    shared->idReady = true;
+
+    if (!waitFor([&] { return shared->returned.load(); }, 3s)) {
+        ADD_FAILURE() << "unsubscribe() from the poll thread waited for the poll thread";
+        // Its poll thread never returns, so destroying the service would hang
+        // the suite: keep it alive until the process exits.
+        new std::shared_ptr<MonitorService>(std::move(monitor));
+        return;
+    }
+    EXPECT_FALSE(isPollingForTest(*monitor));
+
+    auto id2 = monitor->subscribe([shared, kind](const MonitorEvent& e) {
+        if (e.kind == kind)
+            ++shared->secondSubscriberEvents;
+    });
+    EXPECT_TRUE(waitFor([&] { return shared->secondSubscriberEvents.load() >= 1; }, 2s))
+        << "the next subscriber got no event";
+    (void)id2;
+
+    std::thread destroyer([shared, m = std::move(monitor)]() mutable {
+        m.reset();
+        shared->destroyed = true;
+    });
+    const bool destroyedInTime = waitFor([&] { return shared->destroyed.load(); }, 3s);
+    if (destroyedInTime)
+        destroyer.join();
+    else
+        destroyer.detach(); // owns everything it touches
+    EXPECT_TRUE(destroyedInTime) << "the service did not shut down";
+}
+
+} // namespace
+
+// The last subscriber unsubscribes inside its ReaderAdded callback.
+TEST(MonitorServiceTest, LastSubscriberUnsubscribesInsideReaderAdded)
+{
+    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
+    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
+    mock->setReaders({"Reader A"});
+    for (int thread = 0; thread < 2; ++thread) {
+        mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false}); // PnP check
+        mock->pushStatusChange({SCARD_S_SUCCESS, {}, false});                    // initial probe
+    }
+    mock->pushStatusChange({SCARD_S_SUCCESS, {}, true}); // the second poll thread's wait
+
+    lastSubscriberUnsubscribesInside(LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock)),
+                                     MonitorEvent::Kind::ReaderAdded);
+    EXPECT_EQ(counters->releaseContextCount.load(), counters->establishContextCount.load());
+}
+
+// The last subscriber unsubscribes inside the Error event of a source that
+// refuses access.
+TEST(MonitorServiceTest, LastSubscriberUnsubscribesInsideTheErrorEvent)
+{
+    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
+    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
+    mock->setEstablishContextReturn(static_cast<LONG>(SCARD_E_NO_ACCESS));
+
+    lastSubscriberUnsubscribesInside(LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock)),
+                                     MonitorEvent::Kind::Error);
+}

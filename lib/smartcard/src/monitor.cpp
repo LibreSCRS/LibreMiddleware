@@ -36,7 +36,7 @@ Monitor::Monitor(std::unique_ptr<IPCSCScanProvider> provider) : pcsc(std::move(p
 
 Monitor::~Monitor()
 {
-    stopThread();
+    stopThread(Stop::Always);
 }
 
 Monitor::SubscriptionId Monitor::subscribe(MonitorCallback onEvent, ReaderListCallback onReaders)
@@ -71,7 +71,7 @@ void Monitor::unsubscribe(SubscriptionId id)
         shouldStop = subscribers.empty();
     }
     if (shouldStop) {
-        stopThread();
+        stopThread(Stop::IfIdle);
     }
 }
 
@@ -79,60 +79,81 @@ void Monitor::startThread()
 {
     std::lock_guard lock(threadMtx);
     if (monitorThread.joinable()) {
-        // A prior stopThread() on another thread has not yet completed the
-        // join. Two cases:
-        //
-        // (a) Normal: stopThread already set stopRequested=true and
-        //     cancelled, but the OS hasn't scheduled the poll thread to
-        //     exit yet. Just join and let it finish.
-        //
-        // (b) Race: startThread acquired threadMtx BEFORE a concurrent
-        //     stopThread (i.e. subscribe/startThread raced unsubscribe/
-        //     stopThread for threadMtx and won). The poll thread is still
-        //     running with stopRequested=false; if we join now we block
-        //     forever because the concurrent stopThread — which would have
-        //     set stopRequested=true and cancelled — cannot acquire
-        //     threadMtx while we hold it. Detect this by checking
-        //     stopRequested and set it + cancel ourselves so the join
-        //     can complete.
-        if (!stopRequested.load()) {
-            stopRequested = true;
-            SCARDCONTEXT ctx;
-            {
-                std::lock_guard ctxLock(contextMtx);
-                ctx = hContext;
-            }
-            if (ctx)
-                pcsc->cancel(ctx);
+        if (monitorThread.get_id() == std::this_thread::get_id()) {
+            // A subscriber stopped the monitor from its own callback and
+            // subscribes again there: this thread keeps polling.
+            stopRequested = false;
+            return;
         }
-        monitorThread.join();
+        // Either a stop from a subscriber's callback left the thread for us
+        // to join, or the last unsubscribe decided to stop but has not taken
+        // threadMtx yet and the thread still polls. Stop it either way.
+        stopRequested = true;
+        cancelAndJoin();
     }
     previousReaderStates.clear();
     stopRequested = false;
+    {
+        std::lock_guard exitLock(exitMtx);
+        runReturned = false;
+    }
     // Spawn via a local lambda so the std::thread::_State_impl<...> template
     // instantiation parameterises over the anonymous closure (local linkage)
     // rather than over the internal Monitor type, so no weak symbol of it
     // names an internal type.
     // Mirrors the coalesceFlusher spawn in lib/LibreSCRS/SmartCard/MonitorService.cpp.
-    monitorThread = std::thread([this] { run(); });
+    monitorThread = std::thread([this] {
+        run();
+        {
+            std::lock_guard exitLock(exitMtx);
+            runReturned = true;
+        }
+        exitCv.notify_all();
+    });
 }
 
-void Monitor::stopThread()
+void Monitor::stopThread(Stop when)
 {
     std::lock_guard lock(threadMtx);
     if (!monitorThread.joinable()) {
         return;
     }
-    stopRequested = true;
-
-    SCARDCONTEXT ctx;
-    {
-        std::lock_guard ctxLock(contextMtx);
-        ctx = hContext;
+    if (when == Stop::IfIdle) {
+        // The stop was decided before threadMtx was taken; a subscribe in
+        // between may have restarted the thread for a new subscriber.
+        std::lock_guard subscribersLock(subscribersMtx);
+        if (!subscribers.empty())
+            return;
     }
-    if (ctx)
-        pcsc->cancel(ctx);
+    stopRequested = true;
+    // From a subscriber's callback on the poll thread: it cannot wait for
+    // itself. run() ends once the callback returns; the next start, stop or
+    // the destructor joins it.
+    if (monitorThread.get_id() == std::this_thread::get_id())
+        return;
+    cancelAndJoin();
+}
 
+void Monitor::cancelAndJoin()
+{
+    // pcsc-lite drops an SCardCancel that reaches the context outside
+    // SCardGetStatusChange, so a stop landing between the poll loop's
+    // stopRequested check and the wait would lose a single cancel and the
+    // wait would run for SCAN_TIMEOUT. Repeat it until run() returns.
+    // Cancelling under contextMtx keeps run() from releasing the handle
+    // between the read and the cancel.
+    std::unique_lock exitLock(exitMtx);
+    while (!runReturned) {
+        exitLock.unlock();
+        {
+            std::lock_guard ctxLock(contextMtx);
+            if (hContext)
+                pcsc->cancel(hContext);
+        }
+        exitLock.lock();
+        exitCv.wait_for(exitLock, std::chrono::milliseconds(20), [this] { return runReturned; });
+    }
+    exitLock.unlock();
     monitorThread.join();
 }
 
@@ -364,6 +385,9 @@ std::vector<std::string> Monitor::enumerateReaders()
 
 void Monitor::waitForFirstReader(bool pnp)
 {
+    // A subscriber's callback may have stopped the monitor on this thread.
+    if (stopRequested.load())
+        return;
     if (pnp) {
         SCARD_READERSTATE state{};
         state.szReader = kPnpReaderName;
