@@ -3,15 +3,19 @@
 
 // Reader events from CryptoTokenKit's slots in PC/SC terms, against the
 // scripted CryptoTokenKit: what each slot state reads as, when a wait
-// returns, and when the provider asks for the slot manager again.
+// returns, when the provider asks for the slot manager again, and how the
+// monitor's poll loop drives it.
 
 #include <gtest/gtest.h>
 
 #include "ctk_fake.h"
 #include "ctk_scan_provider.h"
+#include "monitor.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -19,7 +23,10 @@
 namespace {
 
 using LibreSCRS::SmartCard::Internal::CtkScanProvider;
+using LibreSCRS::SmartCard::Internal::IPCSCScanProvider;
 using LibreSCRS::SmartCard::Internal::kPnpReaderName;
+using LibreSCRS::SmartCard::Internal::Monitor;
+using LibreSCRS::SmartCard::Internal::MonitorEvent;
 namespace Ctk = LibreSCRS::SmartCard::Internal::Ctk;
 namespace Fake = LibreSCRS::SmartCard::Internal::Ctk::Fake;
 using Clock = std::chrono::steady_clock;
@@ -42,6 +49,76 @@ SCARD_READERSTATE stateFor(const std::string& reader, DWORD current = SCARD_STAT
 DWORD low(DWORD state)
 {
     return state & 0xFFFF;
+}
+
+struct ProviderCalls
+{
+    std::atomic<int> listReaders{0};
+    std::atomic<int> probes{0}; ///< status changes with no timeout
+    std::atomic<int> waits{0};  ///< status changes that may block
+    std::atomic<bool> inWait{false};
+};
+
+// Counts what the monitor asks of the provider it wraps.
+class CountingProvider : public IPCSCScanProvider
+{
+public:
+    CountingProvider(std::unique_ptr<CtkScanProvider> p, std::shared_ptr<ProviderCalls> c)
+        : inner(std::move(p)), calls(std::move(c))
+    {}
+    LONG establishContext(DWORD scope, LPCVOID r1, LPCVOID r2, LPSCARDCONTEXT ctx) override
+    {
+        return inner->establishContext(scope, r1, r2, ctx);
+    }
+    LONG releaseContext(SCARDCONTEXT ctx) override
+    {
+        return inner->releaseContext(ctx);
+    }
+    LONG listReaders(SCARDCONTEXT ctx, LPCSTR groups, LPSTR readers, LPDWORD size) override
+    {
+        ++calls->listReaders;
+        return inner->listReaders(ctx, groups, readers, size);
+    }
+    LONG getStatusChange(SCARDCONTEXT ctx, DWORD timeout, SCARD_READERSTATE* states, DWORD count) override
+    {
+        if (timeout == 0) {
+            ++calls->probes;
+            return inner->getStatusChange(ctx, timeout, states, count);
+        }
+        ++calls->waits;
+        calls->inWait = true;
+        const LONG rv = inner->getStatusChange(ctx, timeout, states, count);
+        calls->inWait = false;
+        return rv;
+    }
+    LONG cancel(SCARDCONTEXT ctx) override
+    {
+        return inner->cancel(ctx);
+    }
+    const char* refusalDetail() const noexcept override
+    {
+        return inner->refusalDetail();
+    }
+    std::chrono::milliseconds refusalRetryInterval() const noexcept override
+    {
+        return inner->refusalRetryInterval();
+    }
+
+private:
+    std::unique_ptr<CtkScanProvider> inner;
+    std::shared_ptr<ProviderCalls> calls;
+};
+
+template <typename Pred>
+bool waitFor(Pred pred, milliseconds limit)
+{
+    const auto deadline = Clock::now() + limit;
+    while (!pred()) {
+        if (Clock::now() >= deadline)
+            return false;
+        std::this_thread::sleep_for(milliseconds{1});
+    }
+    return true;
 }
 
 class CtkScanProviderTest : public ::testing::Test
@@ -298,4 +375,44 @@ TEST_F(CtkScanProviderTest, EmptySlotNamesWithALiveManagerReacquiresIt)
     EXPECT_EQ(provider->establishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &ctx),
               static_cast<LONG>(SCARD_S_SUCCESS));
     EXPECT_EQ(Fake::slotsAcquires(), 2);
+}
+
+// With a reader attached, the monitor's poll loop waits for CryptoTokenKit to
+// report a change instead of asking again in a busy loop, and a reader that
+// arrives during that wait is still reported.
+TEST_F(CtkScanProviderTest, MonitorWaitsWhileAReaderIsAttached)
+{
+    (void)Fake::slot(kA);
+    auto calls = std::make_shared<ProviderCalls>();
+    std::mutex mtx;
+    std::vector<std::string> lastReaders;
+    {
+        Monitor monitor(std::make_unique<CountingProvider>(std::make_unique<CtkScanProvider>(), calls));
+        monitor.subscribe([](const MonitorEvent&) {},
+                          [&](const std::vector<std::string>& readers) {
+                              std::lock_guard lock(mtx);
+                              lastReaders = readers;
+                          });
+
+        EXPECT_TRUE(waitFor([&] { return calls->inWait.load(); }, milliseconds{2000}))
+            << "the poll loop never reached its wait: " << calls->listReaders.load() << " reader lists, "
+            << calls->probes.load() << " probes";
+        const int listsBefore = calls->listReaders.load();
+        const int probesBefore = calls->probes.load();
+        std::this_thread::sleep_for(milliseconds{200});
+        EXPECT_EQ(calls->listReaders.load() - listsBefore, 0) << "reader lists while nothing changed";
+        EXPECT_EQ(calls->probes.load() - probesBefore, 0) << "probes while nothing changed";
+        EXPECT_LE(calls->listReaders.load(), 8) << "reader lists before the loop settled";
+
+        (void)Fake::slot(kB);
+        EXPECT_TRUE(waitFor(
+            [&] {
+                std::lock_guard lock(mtx);
+                return lastReaders == std::vector<std::string>{kA, kB};
+            },
+            milliseconds{2000}))
+            << "the reader that arrived during the wait was not reported";
+        EXPECT_TRUE(waitFor([&] { return calls->inWait.load() && calls->waits.load() >= 2; }, milliseconds{2000}))
+            << "the poll loop did not wait again after the new reader";
+    }
 }

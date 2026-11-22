@@ -18,7 +18,7 @@ CardSessionOpenTests 4
 CrossBackendTests 1
 CrossProviderCoordinationTests 7
 CtkConnectionTests 18
-CtkScanProviderTests 14
+CtkScanProviderTests 15
 DecipherTypesTest 3
 DocpParserTests 4
 ECSigningTests 9

@@ -92,6 +92,7 @@ void Monitor::startThread()
         cancelAndJoin();
     }
     previousReaderStates.clear();
+    pnpState = SCARD_STATE_UNAWARE;
     stopRequested = false;
     {
         std::lock_guard exitLock(exitMtx);
@@ -241,7 +242,7 @@ void Monitor::run()
 
             if (pnp) {
                 states[readerCount].szReader = kPnpReaderName;
-                states[readerCount].dwCurrentState = SCARD_STATE_UNAWARE;
+                states[readerCount].dwCurrentState = pnpState;
             }
 
             notifyReaders(readerList);
@@ -254,6 +255,9 @@ void Monitor::run()
             previousReaderStates.clear();
             for (int i = 0; i < readerCount; i++) {
                 previousReaderStates[readers[i]] = states[i].dwCurrentState;
+            }
+            if (pnp) {
+                pnpState = states[readerCount].dwEventState & ~static_cast<DWORD>(SCARD_STATE_CHANGED);
             }
         }
 

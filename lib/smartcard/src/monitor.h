@@ -85,6 +85,10 @@ private:
     SCARDCONTEXT hContext = 0;
 
     std::map<std::string, DWORD> previousReaderStates;
+    // The PnP entry as last reported, passed back as its current state. A
+    // source that keeps the reader count in the upper 16 bits (CryptoTokenKit)
+    // reports every UNAWARE look as a change, so the loop would never wait.
+    DWORD pnpState = SCARD_STATE_UNAWARE;
     // Last ATR announced for each reader that currently holds a card. A moved
     // PC/SC event counter says the reader's state changed, NOT that the card
     // did -- a contactless reader re-establishes the RF field constantly and the

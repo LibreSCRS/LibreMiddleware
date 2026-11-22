@@ -598,6 +598,14 @@ Notable user-visible changes per release. Format follows
   session that became active) was never watched; it now reports the refusal
   once and retries every 30 seconds. On macOS, where the refusal is final,
   nothing changes.
+- **Stopping the reader monitor returns at once.** Unsubscribing the last
+  subscriber or destroying the monitor could wait out the one-hour status
+  timeout when the stop arrived just before the wait, and a subscriber that
+  arrived while the last one was leaving could be left without a running
+  monitor.
+- **macOS: the reader monitor no longer uses a full core while a reader is
+  attached.** It now waits for CryptoTokenKit to report a change instead of
+  asking again in a loop.
 - **A wrong PACE PIN or PUK costs one try, not one per protocol variant.**
   A protocol variant the card turns down before any secret reaches it is
   skipped for the next one the card lists, for every PACE secret; once the
