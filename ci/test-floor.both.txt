@@ -46,7 +46,7 @@ LibreSCRS_ChipAuthSessionTests 26
 LibreSCRS_CleanseGuardTests 5
 LibreSCRS_CredentialProviderTests 7
 LibreSCRS_LoggingTests 5
-LibreSCRS_MonitorTests 17
+LibreSCRS_MonitorTests 20
 LibreSCRS_OpenSslPtrTests 5
 LibreSCRS_PlainChannelTests 6
 LibreSCRS_SecureAllocatorTests 3
@@ -57,7 +57,7 @@ LibreSCRS_SmChannelTests 20
 LibreSignTests 4
 LocalizedTextFactoriesTests 12
 ManifestCodegenTests 5
-MonitorTests 37
+MonitorTests 44
 NativeSigningServiceTests 14
 NativeUtilsTests 55
 OidDatabaseTests 9

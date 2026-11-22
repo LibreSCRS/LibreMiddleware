@@ -87,22 +87,28 @@ struct MonitorEvent
 /// @par Thread-safety
 /// Thread-safe (see API-POLICY §8). Public methods — @ref subscribe and
 /// @ref unsubscribe — may be called concurrently from multiple consumer
-/// threads. Subscriber callbacks are
-/// invoked on the MonitorService's internal poll thread, never on the caller's
-/// thread; consumers integrating with a GUI toolkit MUST marshal events back
-/// to the UI thread (e.g. `QMetaObject::invokeMethod` with
-/// `Qt::QueuedConnection`, GLib's `g_idle_add`). Callback bodies should
-/// return promptly — blocking the poll thread delays subsequent events.
+/// threads. Subscriber callbacks are invoked on the MonitorService's own
+/// threads, never on the caller's thread: ReaderAdded, ReaderRemoved and
+/// Error on the poll thread, CardInserted and CardRemoved on the thread that
+/// releases them after the coalescing window. Consumers integrating with a GUI
+/// toolkit MUST marshal events back to the UI thread (e.g.
+/// `QMetaObject::invokeMethod` with `Qt::QueuedConnection`, GLib's
+/// `g_idle_add`). Callback bodies should return promptly — a blocked callback
+/// delays subsequent events.
 /// Subscriber callbacks that throw are caught and logged to `stderr` but do
 /// not abort the poll thread; misbehaving subscribers cannot tear down the
 /// MonitorService for unrelated subscribers in the same process.
+/// A MonitorService must not be destroyed from inside one of its own
+/// callbacks.
 ///
 /// @par macOS
 /// On macOS the event source is CryptoTokenKit, which reports a second reader
 /// as soon as it is plugged in. The process must be signed with the
 /// @c com.apple.security.smartcard entitlement; without it the monitor reports
-/// one @ref MonitorEvent::Kind::Error event and no other. On Linux the source
-/// is PC/SC.
+/// one @ref MonitorEvent::Kind::Error event and no other. A subscriber that
+/// drops the last subscription and subscribes again inside that callback is
+/// told again; doing so again inside the second Error is not. On Linux the
+/// source is PC/SC.
 ///
 /// Non-copyable, non-movable. A MonitorService owns a live poll thread and
 /// a subscription table keyed by stable @ref SubscriptionId tokens;
@@ -252,6 +258,20 @@ public:
     ///       (deadlock).
     /// @note The last unsubscribe stops the polling thread and blocks until
     ///       the in-flight PC/SC syscall completes (independent of @p policy).
+    ///       Inside a ReaderAdded, ReaderRemoved or Error callback, which run
+    ///       on the poll thread, it returns at once and polling stops when the
+    ///       callback returns. Inside a CardInserted or CardRemoved callback
+    ///       it waits for the poll thread like a call from any other thread.
+    /// @note Do not make these calls inside a callback; each can block for
+    ///       good:
+    ///       - a subscribe while another thread removes the last subscription;
+    ///       - the last unsubscribe inside a ReaderAdded, ReaderRemoved or
+    ///         Error callback while another thread subscribes;
+    ///       - the last unsubscribe inside a CardInserted or CardRemoved
+    ///         callback while a reader is being added or removed.
+    /// @note A subscriber that arrives while another thread removes the last
+    ///       one may be told late about readers already attached, and about
+    ///       a card already present only when its state changes.
     /// @note Unknown @p id → no-op.
     void unsubscribe(SubscriptionId id, DrainPolicy policy = DrainPolicy::FireAndForget) noexcept;
 

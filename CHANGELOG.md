@@ -68,9 +68,10 @@ Notable user-visible changes per release. Format follows
   outcome, `SigningService::sign` has the service adopt from the cache
   directory the two share: every list the engine verified reaches the store
   -- with a List of Trusted Lists, the lists that verified even when one is
-  unreachable -- a list is downloaded once, and a list that failed is tried again on a later
-  signature. The anchors reach the store through the service that owns it,
-  where the signing engine used to merge them into that store itself.
+  unreachable -- a list is downloaded once, and a list that failed is tried
+  again on a later signature. The anchors reach the store through the service
+  that owns it, where the signing engine used to merge them into that store
+  itself.
   Without a configured `cacheDirectory` the service keeps a private one for
   its lifetime (a fresh directory under `$TMPDIR`, else `/tmp`, removed with
   the service) and reports it in `config()`.
@@ -606,6 +607,13 @@ Notable user-visible changes per release. Format follows
 - **macOS: the reader monitor no longer uses a full core while a reader is
   attached.** It now waits for CryptoTokenKit to report a change instead of
   asking again in a loop.
+- **The reader monitor keeps watching after the PC/SC service is lost.** If
+  the service did not grant a new context at the first attempt, the monitor
+  stopped for good while its subscribers stayed registered; it now asks
+  again as it does at start-up. A last subscriber that unsubscribes inside
+  its own callback no longer leaves the poll thread running into a
+  destroyed service, and one that subscribes again there is told about the
+  readers and cards already attached, or that access is refused.
 - **A wrong PACE PIN or PUK costs one try, not one per protocol variant.**
   A protocol variant the card turns down before any secret reaches it is
   skipped for the next one the card lists, for every PACE secret; once the

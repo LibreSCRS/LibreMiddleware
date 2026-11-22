@@ -25,8 +25,11 @@ namespace LibreSCRS::SmartCard::Internal {
 ///   EMPTY, ValidCard PRESENT with the ATR, MuteCard PRESENT|MUTE, Probing
 ///   the settled state before it. INUSE and EXCLUSIVE never appear. The
 ///   upper 16 bits count the slot's transitions.
-/// - The PnP pseudo-reader carries the slot count in its upper 16 bits, as
-///   pcsc-lite carries the reader count.
+/// - The PnP pseudo-reader carries the slot count in its upper 16 bits and
+///   reports a change when the count it is given differs. pcsc-lite before
+///   2.3.0 ignores those bits; from 2.3.0 it keeps a count of reader events
+///   there and compares the one it is given, so the state the monitor
+///   passes back adds at most one enumeration after a reader event.
 /// - Slots that were there and are all gone answer SCARD_E_NO_SERVICE, so
 ///   the monitor takes the manager again (the system service restarted).
 ///

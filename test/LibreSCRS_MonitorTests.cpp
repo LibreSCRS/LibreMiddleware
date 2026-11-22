@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -731,6 +732,70 @@ TEST(MonitorServiceTest, LastSubscriberUnsubscribesInsideTheErrorEvent)
                                      MonitorEvent::Kind::Error);
 }
 
+namespace {
+
+// Inside the Error event of a source that refuses access, the only subscriber
+// unsubscribes and subscribes another callback. As a first subscriber it must
+// be told about the refusal once, as one made from another thread would be.
+// Returns the number of times the source was asked for a context.
+int resubscribeInsideTheErrorEvent(std::chrono::milliseconds retry)
+{
+    using namespace std::chrono_literals;
+    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
+    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
+    mock->setEstablishContextReturn(static_cast<LONG>(SCARD_E_NO_ACCESS));
+    mock->setRefusalRetryInterval(retry);
+    auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
+
+    auto shared = std::make_shared<SelfUnsubscribe>();
+    shared->service = monitor.get();
+    shared->id = monitor->subscribe([shared](const MonitorEvent& e) {
+        if (e.kind != MonitorEvent::Kind::Error || shared->entered.exchange(true))
+            return;
+        while (!shared->idReady.load())
+            std::this_thread::yield();
+        MonitorService* service = shared->service.load();
+        service->unsubscribe(*shared->id);
+        (void)service->subscribe([shared](const MonitorEvent& ev) {
+            if (ev.kind == MonitorEvent::Kind::Error)
+                ++shared->secondSubscriberEvents;
+        });
+        shared->returned = true;
+    });
+    shared->idReady = true;
+
+    if (!waitFor([&] { return shared->returned.load(); }, 3s)) {
+        ADD_FAILURE() << "unsubscribe() or subscribe() from the poll thread waited for the poll thread";
+        new std::shared_ptr<MonitorService>(std::move(monitor)); // destroying it would hang the suite
+        return 0;
+    }
+    EXPECT_TRUE(waitFor([&] { return shared->secondSubscriberEvents.load() >= 1; }, 2s))
+        << "the subscription made inside the Error event was not told about the refusal";
+    std::this_thread::sleep_for(300ms); // room for a repeat that must not come
+    EXPECT_EQ(shared->secondSubscriberEvents.load(), 1) << "the new subscriber was not told exactly once";
+    const int asked = counters->establishContextCount.load();
+    monitor.reset();
+    return asked;
+}
+
+} // namespace
+
+// A final refusal (CryptoTokenKit without the entitlement): the new subscriber
+// is told, and the poll thread then ends as it does for a first subscriber.
+TEST(MonitorServiceTest, ResubscribeInsideTheErrorEventIsToldAboutAFinalRefusal)
+{
+    EXPECT_EQ(resubscribeInsideTheErrorEvent(std::chrono::milliseconds::zero()), 2)
+        << "the refusal was not judged again for the new subscriber, or the poll thread kept asking";
+}
+
+// A refusal that is asked about again: the new subscriber is told once, not
+// at every retry.
+TEST(MonitorServiceTest, ResubscribeInsideTheErrorEventIsToldAboutARetriedRefusal)
+{
+    EXPECT_GE(resubscribeInsideTheErrorEvent(std::chrono::milliseconds(50)), 3)
+        << "the refusal was not asked about again";
+}
+
 // The last subscriber unsubscribes inside its ReaderAdded callback and is
 // still in it when another thread destroys the service. The poll thread then
 // goes on to the second reader, so it must be joined before the service's
@@ -800,4 +865,78 @@ TEST(MonitorServiceTest, DestroyedWhileTheLastSubscriberIsInsideItsUnsubscribing
     std::lock_guard lock(mtx);
     for (const auto& line : lines)
         ADD_FAILURE() << "the poll thread reported after the service was destroyed: " << line;
+}
+
+// Reader A and its card have been announced. Inside the ReaderAdded callback
+// for Reader B the only subscriber unsubscribes and subscribes another
+// callback. As a first subscriber it must be told about both readers and the
+// card already in Reader A, as one made from another thread would be.
+TEST(MonitorServiceTest, ResubscribeInsideACallbackIsToldWhatIsAlreadyAttached)
+{
+    using namespace std::chrono_literals;
+    using StatusChange = LibreSCRS::SmartCard::Internal::MockPCSCScanProvider::StatusChangeAction;
+    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
+    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
+    auto* source = mock.get();
+    mock->setReaders({"Reader A"});
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false});                          // PnP check
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED, 0}, false}); // card in A
+    StatusChange arrival{SCARD_S_SUCCESS, {SCARD_STATE_PRESENT, SCARD_STATE_CHANGED}, false};
+    arrival.newReaders = std::vector<std::string>{"Reader A", "Reader B"};
+    mock->pushStatusChange(std::move(arrival)); // Reader B arrives
+    // Reader A reported as present: news only to a loop that starts over.
+    mock->pushStatusChange({SCARD_S_SUCCESS,
+                            {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED, SCARD_STATE_EMPTY | SCARD_STATE_CHANGED, 0},
+                            false});
+    mock->pushStatusChange({SCARD_S_SUCCESS, {}, true}); // the wait
+    auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
+
+    struct Shared
+    {
+        std::atomic<MonitorService*> service{nullptr};
+        std::optional<MonitorService::SubscriptionId> id;
+        std::atomic<bool> idReady{false};
+        std::atomic<bool> cardSeen{false};
+        std::atomic<bool> swapped{false};
+        std::mutex mtx;
+        std::vector<std::pair<MonitorEvent::Kind, std::string>> second;
+    };
+    auto shared = std::make_shared<Shared>();
+    shared->service = monitor.get();
+    shared->id = monitor->subscribe([shared, source](const MonitorEvent& e) {
+        while (!shared->idReady.load())
+            std::this_thread::yield();
+        if (e.kind == MonitorEvent::Kind::ReaderAdded && e.readerName == "Reader A") {
+            source->setListReadersBlocking(true); // Reader B waits until the card was announced
+        } else if (e.kind == MonitorEvent::Kind::CardInserted) {
+            shared->cardSeen = true;
+        } else if (e.kind == MonitorEvent::Kind::ReaderAdded && e.readerName == "Reader B") {
+            MonitorService* service = shared->service.load();
+            service->unsubscribe(*shared->id);
+            (void)service->subscribe([shared](const MonitorEvent& ev) {
+                std::lock_guard lock(shared->mtx);
+                shared->second.emplace_back(ev.kind, ev.readerName);
+            });
+            shared->swapped = true;
+        }
+    });
+    shared->idReady = true;
+
+    // Released before any assertion can return: the service's destructor
+    // would wait for good on a poll thread held in listReaders.
+    const bool cardSeen = waitFor([&] { return shared->cardSeen.load(); }, 3s);
+    source->releaseListReadersBlock();
+    ASSERT_TRUE(cardSeen);
+    ASSERT_TRUE(waitFor([&] { return shared->swapped.load(); }, 3s));
+
+    const auto told = [&](MonitorEvent::Kind kind, const std::string& reader) {
+        std::lock_guard lock(shared->mtx);
+        return std::ranges::find(shared->second, std::pair{kind, reader}) != shared->second.end();
+    };
+    EXPECT_TRUE(waitFor([&] { return told(MonitorEvent::Kind::ReaderAdded, "Reader A"); }, 2s));
+    EXPECT_TRUE(waitFor([&] { return told(MonitorEvent::Kind::ReaderAdded, "Reader B"); }, 2s));
+    EXPECT_TRUE(waitFor([&] { return told(MonitorEvent::Kind::CardInserted, "Reader A"); }, 2s));
+    EXPECT_EQ(counters->establishContextCount.load(), 1) << "the poll thread was replaced";
+    monitor.reset();
+    EXPECT_EQ(counters->releaseContextCount.load(), counters->establishContextCount.load());
 }

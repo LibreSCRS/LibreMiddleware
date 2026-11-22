@@ -28,6 +28,12 @@ static constexpr LONG kScUnknownReader = static_cast<LONG>(SCARD_E_UNKNOWN_READE
 static constexpr LONG kScCancelled = static_cast<LONG>(SCARD_E_CANCELLED);
 static constexpr LONG kScNoAccess = static_cast<LONG>(SCARD_E_NO_ACCESS);
 
+namespace {
+// Thrown by reEstablishContext() when the service grants no new context.
+struct ContextLost
+{};
+} // namespace
+
 Monitor::Monitor(std::unique_ptr<IPCSCScanProvider> provider) : pcsc(std::move(provider))
 {
     if (!pcsc)
@@ -81,8 +87,10 @@ void Monitor::startThread()
     if (monitorThread.joinable()) {
         if (monitorThread.get_id() == std::this_thread::get_id()) {
             // A subscriber stopped the monitor from its own callback and
-            // subscribes again there: this thread keeps polling.
+            // subscribes again there: this thread keeps polling, and starts
+            // over so the new subscriber hears what is already attached.
             stopRequested = false;
+            restartRequested = true;
             return;
         }
         // Either a stop from a subscriber's callback left the thread for us
@@ -94,6 +102,7 @@ void Monitor::startThread()
     previousReaderStates.clear();
     pnpState = SCARD_STATE_UNAWARE;
     stopRequested = false;
+    restartRequested = false;
     {
         std::lock_guard exitLock(exitMtx);
         runReturned = false;
@@ -160,8 +169,28 @@ void Monitor::cancelAndJoin()
 
 void Monitor::run()
 {
-    bool contextEstablished = false;
     bool refusalReported = false;
+    while (acquireContext(refusalReported)) {
+        if (!pollUntilContextLost())
+            return;
+        // The old context is released and no new one was granted: ask again
+        // as at start-up, and start over on the context that is granted.
+        restartRequested = true;
+    }
+}
+
+void Monitor::pauseUnlessStopped(std::chrono::milliseconds pause)
+{
+    // Wakes often enough that stopping is prompt.
+    const auto until = std::chrono::steady_clock::now() + pause;
+    while (!stopRequested.load() && std::chrono::steady_clock::now() < until)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+}
+
+bool Monitor::acquireContext(bool& refusalReported)
+{
+    bool contextEstablished = false;
+    bool askedAgainSincePause = false;
     while (!stopRequested.load()) {
         LONG rv = kScSuccess;
         try {
@@ -175,19 +204,30 @@ void Monitor::run()
         }
         if (rv == kScNoAccess) {
             if (!refusalReported) {
+                // Kept apart from a restart run() asked for, so only a callback
+                // that subscribes again during this notification counts.
+                const bool restartPending = restartRequested.exchange(false);
                 notifyEvent({MonitorEvent::Type::Error, {}, {}, pcsc->refusalDetail()});
                 refusalReported = true;
+                if (restartRequested.exchange(restartPending)) {
+                    // A first subscriber again: it is told too, at most once
+                    // per refusal retry pause, so a subscriber that swaps on
+                    // every refusal cannot spin the loop.
+                    refusalReported = false;
+                    if (!askedAgainSincePause) {
+                        askedAgainSincePause = true;
+                        continue;
+                    }
+                }
             }
             const auto retry = pcsc->refusalRetryInterval();
             if (retry <= std::chrono::milliseconds::zero())
-                return; // final: the source says it will not change
-            // Ask again later, waking often enough that stopping is prompt.
-            const auto until = std::chrono::steady_clock::now() + retry;
-            while (!stopRequested.load() && std::chrono::steady_clock::now() < until)
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                return false; // final: the source says it will not change
+            pauseUnlessStopped(retry);
+            askedAgainSincePause = false;
             continue;
         }
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        pauseUnlessStopped(std::chrono::seconds(1));
     }
     if (stopRequested.load()) {
         // stopThread() (or startThread() fixing the startThread/stopThread
@@ -207,13 +247,22 @@ void Monitor::run()
                 pcsc->releaseContext(ctx);
             }
         }
-        return;
+        return false;
     }
+    return true;
+}
 
+bool Monitor::pollUntilContextLost()
+{
     try {
         bool pnp = checkPnPSupport();
 
         while (!stopRequested.load()) {
+            if (restartRequested.exchange(false)) {
+                previousReaderStates.clear();
+                pnpState = SCARD_STATE_UNAWARE;
+                lastSeenAtr.clear();
+            }
             auto readers = enumerateReaders();
 
             if (readers.empty()) {
@@ -246,6 +295,8 @@ void Monitor::run()
             }
 
             notifyReaders(readerList);
+            if (restartRequested.load())
+                continue;
 
             if (!processEvents(states, readerCount, pnp)) {
                 break; // cancelled
@@ -276,6 +327,8 @@ void Monitor::run()
                 pcsc->releaseContext(ctx);
             }
         }
+    } catch (const ContextLost&) {
+        return true;
     } catch (...) {
         // Same teardown discipline on the exception path: zero under
         // contextMtx before release so a concurrent stopThread() cannot
@@ -292,6 +345,7 @@ void Monitor::run()
             }
         }
     }
+    return false;
 }
 
 void Monitor::setContext(SCARDCONTEXT ctx)
@@ -319,7 +373,7 @@ void Monitor::reEstablishContext()
     SCARDCONTEXT ctx = 0;
     LONG rv = pcsc->establishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &ctx);
     if (rv != kScSuccess) {
-        throw std::runtime_error("Cannot re-establish context in Monitor");
+        throw ContextLost{};
     }
     setContext(ctx);
 }
@@ -515,7 +569,7 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
             }
         }
 
-        if (needReEnumeration) {
+        if (needReEnumeration || restartRequested.load()) {
             return true;
         }
 

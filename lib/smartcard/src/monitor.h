@@ -11,6 +11,7 @@
 #include <smartcard/monitor_event.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
@@ -67,6 +68,13 @@ private:
     void stopThread(Stop when);
     void cancelAndJoin();
     void run();
+    // Asks for a context until one is granted (true) or the monitor stops
+    // or the source refuses for good (false).
+    bool acquireContext(bool& refusalReported);
+    // Polls on the granted context; true when it was lost and no new one
+    // was granted, false when the monitor stopped or polling failed.
+    bool pollUntilContextLost();
+    void pauseUnlessStopped(std::chrono::milliseconds pause);
 
     LONG establishContext();
     void setContext(SCARDCONTEXT ctx);
@@ -96,6 +104,11 @@ private:
     // is what decides whether a still-present card is a new card.
     std::map<std::string, std::vector<std::uint8_t>> lastSeenAtr;
     std::atomic<bool> stopRequested{false};
+    // Set when a callback drops the last subscription and subscribes again
+    // on the poll thread, and by run() after a lost context; the loop then
+    // forgets its saved state and enumerates again. Only the callback's
+    // restart reports a refusal again.
+    std::atomic<bool> restartRequested{false};
 
     mutable std::mutex subscribersMtx;
     std::map<SubscriptionId, Subscriber> subscribers;

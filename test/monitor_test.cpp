@@ -1052,8 +1052,8 @@ TEST_F(MonitorTestFixture, LastSubscriberUnsubscribesInsideItsCallback)
 }
 
 // A subscriber that drops its subscription and subscribes again inside its
-// callback keeps the poll thread it runs on: the new subscription gets the
-// events that follow.
+// callback keeps the poll thread it runs on, and the new subscription gets
+// the card events.
 TEST_F(MonitorTestFixture, ResubscribeInsideTheCallbackKeepsThePollThread)
 {
     using namespace std::chrono_literals;
@@ -1095,6 +1095,50 @@ TEST_F(MonitorTestFixture, ResubscribeInsideTheCallbackKeepsThePollThread)
     EXPECT_EQ(counters->releaseContextCount.load(), counters->establishContextCount.load());
 }
 
+// The swap happens inside the CardInserted callback, in a cycle whose PnP entry
+// does not change. The new subscriber is told about the card before the loop
+// waits again: the probe after the swap is news only to a loop that starts
+// over, and the wait that would otherwise take it stands for any later event.
+TEST_F(MonitorTestFixture, ResubscribeInsideACardEventIsToldAboutTheCard)
+{
+    using namespace std::chrono_literals;
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    mock->setReaders({"Reader A"});
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false});                          // PnP check
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED, 0}, false}); // probe
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED, 0}, false}); // probe again
+    mock->pushStatusChange({SCARD_S_SUCCESS, {}, true});                                              // the wait
+
+    auto shared = std::make_shared<SelfStop>();
+    auto monitor = std::make_unique<Monitor>(std::move(mock));
+    shared->monitor = monitor.get();
+    shared->id = monitor->subscribe([shared](const MonitorEvent& e) {
+        if (e.type != MonitorEvent::Type::CardInserted || shared->entered.exchange(true))
+            return;
+        while (!shared->idReady.load())
+            std::this_thread::yield();
+        Monitor* m = shared->monitor.load();
+        m->unsubscribe(shared->id.load());
+        m->subscribe([shared](const MonitorEvent& ev) {
+            if (ev.type == MonitorEvent::Type::CardInserted)
+                ++shared->secondEvents;
+        });
+        shared->returned = true;
+    });
+    shared->idReady = true;
+
+    if (!waitFor([&] { return shared->returned.load(); }, 3s)) {
+        ADD_FAILURE() << "unsubscribe() or subscribe() from the poll thread waited for the poll thread";
+        (void)monitor.release(); // its poll thread never returns; destroying it would hang the suite
+        return;
+    }
+    EXPECT_TRUE(waitFor([&] { return shared->secondEvents.load() == 1; }, 2s))
+        << "the subscription made inside the card event was not told about the card";
+    EXPECT_EQ(counters->establishContextCount.load(), 1) << "the poll thread was replaced";
+    monitor.reset();
+    EXPECT_EQ(counters->releaseContextCount.load(), counters->establishContextCount.load());
+}
+
 // A release that lands before listReaders reaches its wait is kept.
 TEST(MockPCSCScanProviderTest, ListReadersReleaseBeforeTheWaitIsKept)
 {
@@ -1111,13 +1155,216 @@ TEST(MockPCSCScanProviderTest, ListReadersReleaseBeforeTheWaitIsKept)
         mock.listReaders(0, nullptr, nullptr, &size);
         returned = true;
     });
-    const auto deadline = std::chrono::steady_clock::now() + 2s;
-    while (!returned.load() && std::chrono::steady_clock::now() < deadline)
-        std::this_thread::sleep_for(1ms);
-    const bool returnedInTime = returned.load();
+    const bool returnedInTime = waitFor([&] { return returned.load(); }, 2s);
     if (!returnedInTime)
         mock.releaseListReadersBlock();
     caller.join();
 
     EXPECT_TRUE(returnedInTime) << "the early release was lost and listReaders blocked";
+}
+
+namespace {
+
+// Reader A holds a card. The wait reports the service lost, and the service
+// refuses a new context from the moment the card was announced until the
+// test lets it back. A reader event before the loss leaves the card's state
+// saved, so only a loop that starts over on the new context announces the card
+// again. Returns the mock so the test can let the service back.
+MockPCSCScanProvider* scriptLostServiceNotBackAtOnce(std::unique_ptr<MockPCSCScanProvider>& mock)
+{
+    mock->setReaders({"Reader A"});
+    for (int context = 0; context < 2; ++context) {
+        mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false});                          // PnP check
+        mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED, 0}, false}); // probe
+        if (context == 0) {
+            mock->pushStatusChange(
+                {SCARD_S_SUCCESS, {SCARD_STATE_PRESENT, SCARD_STATE_CHANGED}, false});  // reader event
+            mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_PRESENT, 0}, false}); // probe: nothing new
+            mock->pushStatusChange({LONG(SCARD_E_NO_SERVICE), {}, false});              // the service goes away
+        }
+    }
+    mock->pushStatusChange({SCARD_S_SUCCESS, {}, true}); // the wait on the new context
+    return mock.get();
+}
+
+} // namespace
+
+// A service that is lost and not back at the first attempt is asked for again,
+// as at start-up, and events resume once it returns.
+TEST_F(MonitorTestFixture, LostServiceNotBackAtOnceIsEstablishedAgain)
+{
+    using namespace std::chrono_literals;
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    auto* source = scriptLostServiceNotBackAtOnce(mock);
+    std::atomic<int> inserted{0};
+    std::atomic<int> removed{0};
+    Monitor monitor(std::move(mock));
+    monitor.subscribe([&](const MonitorEvent& e) {
+        if (e.type == MonitorEvent::Type::CardInserted && inserted++ == 0)
+            source->setEstablishContextReturn(LONG(SCARD_E_NO_SERVICE));
+        if (e.type == MonitorEvent::Type::CardRemoved)
+            ++removed;
+    });
+
+    // The failed re-establish plus at least one retry.
+    ASSERT_TRUE(waitFor([&] { return counters->establishContextCount.load() >= 3; }, 4s))
+        << "the lost service was not asked for again";
+    EXPECT_EQ(removed.load(), 1);
+    source->setEstablishContextReturn(SCARD_S_SUCCESS);
+    EXPECT_TRUE(waitFor([&] { return inserted.load() == 2; }, 3s)) << "events did not resume";
+}
+
+// A stop while the monitor waits to ask for a lost service again ends at once.
+TEST_F(MonitorTestFixture, StopDuringTheEstablishRetryIsPrompt)
+{
+    using namespace std::chrono_literals;
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    auto* source = scriptLostServiceNotBackAtOnce(mock);
+    std::atomic<int> inserted{0}; // outlives the monitor, whose callback writes it
+    auto monitor = std::make_unique<Monitor>(std::move(mock));
+    monitor->subscribe([&](const MonitorEvent& e) {
+        if (e.type == MonitorEvent::Type::CardInserted && inserted++ == 0)
+            source->setEstablishContextReturn(LONG(SCARD_E_NO_SERVICE));
+    });
+
+    // Right after an attempt the monitor is in its pause before the next one.
+    ASSERT_TRUE(waitFor([&] { return counters->establishContextCount.load() >= 3; }, 4s));
+    const auto t0 = std::chrono::steady_clock::now();
+    monitor.reset();
+    const auto took = std::chrono::steady_clock::now() - t0;
+    EXPECT_LT(took, 500ms) << "the stop waited out the pause between attempts";
+    EXPECT_EQ(counters->releaseContextCount.load(), 1);
+}
+
+// A source that refuses access once the service is lost: the restart run()
+// asks for after the loss is not a new subscriber, so the refusal is reported
+// once.
+TEST_F(MonitorTestFixture, RefusalAfterALostServiceIsReportedOnce)
+{
+    using namespace std::chrono_literals;
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    auto* source = scriptLostServiceNotBackAtOnce(mock);
+    mock->setRefusalRetryInterval(0ms);
+    std::atomic<int> inserted{0};
+    std::atomic<int> errors{0};
+    Monitor monitor(std::move(mock));
+    monitor.subscribe([&](const MonitorEvent& e) {
+        if (e.type == MonitorEvent::Type::CardInserted && inserted++ == 0)
+            source->setEstablishContextReturn(LONG(SCARD_E_NO_ACCESS));
+        if (e.type == MonitorEvent::Type::Error)
+            ++errors;
+    });
+
+    ASSERT_TRUE(waitFor([&] { return errors.load() >= 1; }, 3s)) << "the refusal was not reported";
+    std::this_thread::sleep_for(300ms); // room for a repeat that must not come
+    EXPECT_EQ(errors.load(), 1);
+    // The first context, the failed re-establish, and the one refused attempt.
+    EXPECT_EQ(counters->establishContextCount.load(), 3) << "a final refusal did not end the poll";
+}
+
+// A refusal that lifts after a lost service: the restart run() asked for
+// survives the refusal, so the card is announced again once access returns.
+TEST_F(MonitorTestFixture, RetriedRefusalAfterALostServiceStartsOverWhenGranted)
+{
+    using namespace std::chrono_literals;
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    auto* source = scriptLostServiceNotBackAtOnce(mock);
+    mock->setRefusalRetryInterval(50ms);
+    std::atomic<int> inserted{0};
+    std::atomic<int> errors{0};
+    Monitor monitor(std::move(mock));
+    monitor.subscribe([&](const MonitorEvent& e) {
+        if (e.type == MonitorEvent::Type::CardInserted && inserted++ == 0)
+            source->setEstablishContextReturn(LONG(SCARD_E_NO_ACCESS));
+        if (e.type == MonitorEvent::Type::Error)
+            ++errors;
+    });
+
+    ASSERT_TRUE(waitFor([&] { return errors.load() >= 1; }, 3s)) << "the refusal was not reported";
+    source->setEstablishContextReturn(SCARD_S_SUCCESS);
+    EXPECT_TRUE(waitFor([&] { return inserted.load() == 2; }, 3s))
+        << "the card was not announced again once access returned";
+    EXPECT_EQ(errors.load(), 1);
+}
+
+namespace {
+
+// A subscriber that drops its subscription and subscribes again inside every
+// Error event, until told to stop. Declared before the monitor it swaps on, so
+// it outlives the poll thread's copies of the callback.
+struct RefusalSwapper
+{
+    std::mutex mtx;
+    std::vector<std::chrono::steady_clock::time_point> errorsAt;
+    std::atomic<bool> stopSwapping{false};
+    std::atomic<Monitor::SubscriptionId> current{0};
+    MonitorCallback callback;
+
+    void start(Monitor& monitor)
+    {
+        callback = [this, &monitor](const MonitorEvent& e) {
+            if (e.type != MonitorEvent::Type::Error)
+                return;
+            {
+                std::lock_guard lock(mtx);
+                errorsAt.push_back(std::chrono::steady_clock::now());
+            }
+            if (stopSwapping.load())
+                return;
+            while (current.load() == 0)
+                std::this_thread::yield();
+            monitor.unsubscribe(current.exchange(0));
+            current = monitor.subscribe(callback);
+        };
+        current = monitor.subscribe(callback);
+    }
+    std::size_t errors()
+    {
+        std::lock_guard lock(mtx);
+        return errorsAt.size();
+    }
+};
+
+} // namespace
+
+// A subscriber that swaps its subscription on every final refusal is told
+// once more, and then the poll ends instead of asking again without pause.
+TEST_F(MonitorTestFixture, SwapOnEveryFinalRefusalDoesNotSpin)
+{
+    using namespace std::chrono_literals;
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    mock->setEstablishContextReturn(LONG(SCARD_E_NO_ACCESS));
+    mock->setRefusalRetryInterval(0ms);
+    RefusalSwapper swapper;
+    Monitor monitor(std::move(mock));
+    swapper.start(monitor);
+
+    ASSERT_TRUE(waitFor([&] { return swapper.errors() >= 2; }, 3s));
+    std::this_thread::sleep_for(300ms); // room for a spin that must not come
+    swapper.stopSwapping = true;
+    EXPECT_EQ(swapper.errors(), 2U);
+    EXPECT_EQ(counters->establishContextCount.load(), 2);
+}
+
+// With a refusal that is retried, the swap gets one immediate re-ask after
+// each pause: the Errors come in pairs, a pause apart.
+TEST_F(MonitorTestFixture, SwapOnEveryRetriedRefusalAsksOncePerPause)
+{
+    using namespace std::chrono_literals;
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    mock->setEstablishContextReturn(LONG(SCARD_E_NO_ACCESS));
+    mock->setRefusalRetryInterval(100ms);
+    RefusalSwapper swapper;
+    Monitor monitor(std::move(mock));
+    swapper.start(monitor);
+
+    ASSERT_TRUE(waitFor([&] { return swapper.errors() >= 6; }, 10s));
+    swapper.stopSwapping = true;
+    std::lock_guard lock(swapper.mtx);
+    const auto& at = swapper.errorsAt;
+    ASSERT_LT(at.size(), 20U) << "the swaps were asked again without a pause";
+    for (std::size_t i = 0; i + 2 < 6; i += 2) {
+        EXPECT_LT(at[i + 1] - at[i], 80ms) << "no immediate re-ask after pause " << i / 2;
+        EXPECT_GE(at[i + 2] - at[i + 1], 80ms) << "a second re-ask without a pause after " << i + 1;
+    }
 }
