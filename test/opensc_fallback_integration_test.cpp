@@ -164,7 +164,8 @@ protected:
             GTEST_SKIP() << "No plugins loaded from " << PLUGIN_DIR << " — check build";
         }
 
-        const auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+        const auto readers =
+            LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders().value_or(std::vector<std::string>{});
         if (readers.empty()) {
             registry.reset();
             GTEST_SKIP() << "No smart card readers found";

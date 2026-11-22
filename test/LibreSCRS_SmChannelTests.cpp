@@ -10,12 +10,13 @@
 ///        - Channel construction with provided session keys succeeds.
 ///        - Default state is Open.
 ///        - Closing the channel zeroises keys and transitions to Closed;
-///          transmit returns the 6F00 sentinel without touching the wire.
-///        - CancelToken is honoured (6F01 sentinel, no transmit).
+///          transmit is ChannelUnusable without touching the wire.
+///        - CancelToken is honoured (Cancelled, no transmit, state kept).
 ///        - SW 6987 and SW 6988 from the card transition the channel to
-///          Failed and surface the raw status word to the caller.
+///          Failed and are the answer, as the card sent them.
 ///        - A MAC-failure path (malformed response) transitions to Failed
-///          and returns SW 6988.
+///          and is an IntegrityFailure.
+///        - A reader error mid-exchange is returned and fails the channel.
 
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Secure/Buffer.h>
@@ -45,6 +46,7 @@ using LibreSCRS::SecureChannel::SessionKeys;
 using LibreSCRS::SecureChannel::SmCipher;
 using LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection;
 using LibreSCRS::SmartCard::AppletAid;
+using LibreSCRS::SmartCard::TransportError;
 using LibreSCRS::SmartCard::Internal::APDUCommand;
 using LibreSCRS::SmartCard::Internal::APDUResponse;
 
@@ -103,7 +105,7 @@ TEST(PaceChannelTests, ReportsAppletAidAndOpenStateAtConstruction)
     EXPECT_EQ(channel.state(), ChannelState::Open);
 }
 
-TEST(PaceChannelTests, CloseTransitionsToClosedAndSuppressesTransmit)
+TEST(PaceChannelTests, AClosedChannelIsUnusableAndSendsNothing)
 {
     FakePCSCConnection fakeConn;
     PaceChannel channel(fakeConn, makeNamEmrtdAid(), makeFakeAesKeys());
@@ -111,7 +113,8 @@ TEST(PaceChannelTests, CloseTransitionsToClosedAndSuppressesTransmit)
     EXPECT_EQ(channel.state(), ChannelState::Closed);
     auto resp = channel.transmit(makeSelectMf(), CancelToken{});
     EXPECT_TRUE(fakeConn.history().empty());
-    EXPECT_EQ(resp.statusWord(), 0x6F00);
+    ASSERT_FALSE(resp.has_value());
+    EXPECT_EQ(resp.error().kind, TransportError::Kind::ChannelUnusable);
 }
 
 TEST(PaceChannelTests, CloseIsIdempotent)
@@ -123,7 +126,7 @@ TEST(PaceChannelTests, CloseIsIdempotent)
     EXPECT_EQ(channel.state(), ChannelState::Closed);
 }
 
-TEST(PaceChannelTests, CancelTokenHonoured)
+TEST(PaceChannelTests, ACancelledTokenSendsNothingAndKeepsTheChannelOpen)
 {
     FakePCSCConnection fakeConn;
     PaceChannel channel(fakeConn, makeNamEmrtdAid(), makeFakeAesKeys());
@@ -132,32 +135,36 @@ TEST(PaceChannelTests, CancelTokenHonoured)
     src.requestCancel();
     auto resp = channel.transmit(makeSelectMf(), token);
     EXPECT_TRUE(fakeConn.history().empty());
-    EXPECT_EQ(resp.statusWord(), 0x6F01);
+    ASSERT_FALSE(resp.has_value());
+    EXPECT_EQ(resp.error().kind, TransportError::Kind::Cancelled);
+    EXPECT_EQ(channel.state(), ChannelState::Open);
 }
 
-TEST(PaceChannelTests, Sw6987FromCardTransitionsToFailed)
+TEST(PaceChannelTests, ACardSent6987IsTheAnswerAndFailsTheChannel)
 {
     FakePCSCConnection fakeConn;
     fakeConn.setResponder([](const auto&) { return makeRaw(0x69, 0x87); });
     PaceChannel channel(fakeConn, makeNamEmrtdAid(), makeFakeAesKeys());
 
     auto resp = channel.transmit(makeSelectMf(), CancelToken{});
-    EXPECT_EQ(resp.statusWord(), 0x6987);
+    ASSERT_TRUE(resp.has_value());
+    EXPECT_EQ(resp->statusWord(), 0x6987);
     EXPECT_EQ(channel.state(), ChannelState::Failed);
 }
 
-TEST(PaceChannelTests, Sw6988FromCardTransitionsToFailed)
+TEST(PaceChannelTests, ACardSent6988IsTheAnswerAndFailsTheChannel)
 {
     FakePCSCConnection fakeConn;
     fakeConn.setResponder([](const auto&) { return makeRaw(0x69, 0x88); });
     PaceChannel channel(fakeConn, makeNamEmrtdAid(), makeFakeAesKeys());
 
     auto resp = channel.transmit(makeSelectMf(), CancelToken{});
-    EXPECT_EQ(resp.statusWord(), 0x6988);
+    ASSERT_TRUE(resp.has_value());
+    EXPECT_EQ(resp->statusWord(), 0x6988);
     EXPECT_EQ(channel.state(), ChannelState::Failed);
 }
 
-TEST(PaceChannelTests, MalformedResponseTransitionsToFailed)
+TEST(PaceChannelTests, AMalformedResponseIsAnIntegrityFailureAndFailsTheChannel)
 {
     // Card replies SW 9000 with no SM TLVs — MAC unwrap will fail.
     FakePCSCConnection fakeConn;
@@ -166,27 +173,28 @@ TEST(PaceChannelTests, MalformedResponseTransitionsToFailed)
 
     auto resp = channel.transmit(makeSelectMf(), CancelToken{});
     EXPECT_EQ(channel.state(), ChannelState::Failed);
-    EXPECT_EQ(resp.statusWord(), 0x6988);
+    ASSERT_FALSE(resp.has_value());
+    EXPECT_EQ(resp.error().kind, TransportError::Kind::IntegrityFailure);
 }
 
-TEST(PaceChannelTests, Sw6883ChainingResponseTransitionsToFailed)
+TEST(PaceChannelTests, AnUnprotected6883IsAnIntegrityFailure)
 {
     // ISO 7816-4 SW 6883 ("last command of the chain expected") is not one
     // of the two SM-invalidation status words short-circuited before MAC
     // unwrap (6987/6988), so a bare 6883 with no SM TLVs is treated like any
-    // other unprotected reply: MAC unwrap fails and the channel maps it to
-    // the same 6988 sentinel as MalformedResponseTransitionsToFailed, not
-    // to the raw 6883 the card sent.
+    // other unprotected reply: MAC unwrap fails, which is an integrity
+    // failure, not the raw 6883 the card sent.
     FakePCSCConnection fakeConn;
     fakeConn.setResponder([](const auto&) { return makeRaw(0x68, 0x83); });
     PaceChannel channel(fakeConn, makeNamEmrtdAid(), makeFakeAesKeys());
 
     auto resp = channel.transmit(makeSelectMf(), CancelToken{});
     EXPECT_EQ(channel.state(), ChannelState::Failed);
-    EXPECT_EQ(resp.statusWord(), 0x6988);
+    ASSERT_FALSE(resp.has_value());
+    EXPECT_EQ(resp.error().kind, TransportError::Kind::IntegrityFailure);
 }
 
-TEST(PaceChannelTests, TransmitAfterFailedReturnsFailedSentinel)
+TEST(PaceChannelTests, AFailedChannelIsUnusableAndSendsNothing)
 {
     FakePCSCConnection fakeConn;
     fakeConn.setResponder([](const auto&) { return makeRaw(0x69, 0x87); });
@@ -197,7 +205,26 @@ TEST(PaceChannelTests, TransmitAfterFailedReturnsFailedSentinel)
     fakeConn.clearHistory();
     auto resp = channel.transmit(makeSelectMf(), CancelToken{});
     EXPECT_TRUE(fakeConn.history().empty());
-    EXPECT_EQ(resp.statusWord(), 0x6F02);
+    ASSERT_FALSE(resp.has_value());
+    EXPECT_EQ(resp.error().kind, TransportError::Kind::ChannelUnusable);
+}
+
+TEST(PaceChannelTests, AReaderErrorMidExchangeFailsTheChannel)
+{
+    FakePCSCConnection fakeConn;
+    fakeConn.setResponder([](const auto&) {
+        return std::unexpected(TransportError{TransportError::Kind::ProtocolError, "reader lost the card"});
+    });
+    PaceChannel channel(fakeConn, makeNamEmrtdAid(), makeFakeAesKeys());
+
+    auto resp = channel.transmit(makeSelectMf(), CancelToken{});
+    ASSERT_FALSE(resp.has_value());
+    EXPECT_EQ(resp.error().kind, TransportError::Kind::ProtocolError);
+    EXPECT_EQ(channel.state(), ChannelState::Failed);
+
+    auto next = channel.transmit(makeSelectMf(), CancelToken{});
+    ASSERT_FALSE(next.has_value());
+    EXPECT_EQ(next.error().kind, TransportError::Kind::ChannelUnusable);
 }
 
 TEST(BacChannelTests, ReportsAppletAidAndOpenStateAtConstruction)
@@ -216,16 +243,18 @@ TEST(BacChannelTests, CloseTransitionsToClosed)
     EXPECT_EQ(channel.state(), ChannelState::Closed);
     auto resp = channel.transmit(makeSelectMf(), CancelToken{});
     EXPECT_TRUE(fakeConn.history().empty());
-    EXPECT_EQ(resp.statusWord(), 0x6F00);
+    ASSERT_FALSE(resp.has_value());
+    EXPECT_EQ(resp.error().kind, TransportError::Kind::ChannelUnusable);
 }
 
-TEST(BacChannelTests, Sw6988TransitionsToFailed)
+TEST(BacChannelTests, ACardSent6988IsTheAnswerAndFailsTheChannel)
 {
     FakePCSCConnection fakeConn;
     fakeConn.setResponder([](const auto&) { return makeRaw(0x69, 0x88); });
     BacChannel channel(fakeConn, makeNamEmrtdAid(), makeFakeDes3Keys());
     auto resp = channel.transmit(makeSelectMf(), CancelToken{});
-    EXPECT_EQ(resp.statusWord(), 0x6988);
+    ASSERT_TRUE(resp.has_value());
+    EXPECT_EQ(resp->statusWord(), 0x6988);
     EXPECT_EQ(channel.state(), ChannelState::Failed);
 }
 

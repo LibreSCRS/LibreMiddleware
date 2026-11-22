@@ -10,6 +10,7 @@
 #include "types.h"
 #include "secure_messaging.h"
 #include <LibreSCRS/CancelToken.h>
+#include <LibreSCRS/SmartCard/TransportError.h>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -49,6 +50,11 @@ struct ChipAuthResult
     ///        SM tunnel a refusal of an advertised capability still maps to
     ///        FAILED. Never set on the empty-response or verification krak.
     bool chipRefusedProtocol = false;
+    /// @brief The transport error that ended the run (reader, connection or
+    ///        secure-messaging integrity), when one did. Set with FAILED and
+    ///        never together with @ref chipRefusedProtocol: a refusal is a
+    ///        status word the card sent, this is no answer or a bad one.
+    std::optional<LibreSCRS::SmartCard::TransportError> transportError;
     std::string protocol;
     std::string errorDetail;
     std::optional<SessionKeys> newSessionKeys;

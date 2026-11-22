@@ -17,6 +17,7 @@
 
 #include "apdu.h"
 
+#include <expected>
 #include <optional>
 
 namespace LibreSCRS::SecureChannel {
@@ -60,7 +61,7 @@ public:
         return session.channelState().value_or(ChannelState::Open);
     }
 
-    [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
+    [[nodiscard]] std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError>
     transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token) override
     {
         return LibreSCRS::SmartCard::SessionConnection::transmitThrough(session, cmd, std::move(token));

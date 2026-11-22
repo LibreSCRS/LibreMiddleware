@@ -3,7 +3,10 @@
 
 #pragma once
 
+#include <LibreSCRS/SmartCard/TransportError.h>
+
 #include <cstdint>
+#include <expected>
 #include <span>
 
 namespace LibreSCRS::SmartCard::Internal {
@@ -36,10 +39,10 @@ public:
     virtual ~IConnection() = default;
 
     /// Send a command APDU to the card and return the response.
-    /// Implementations are expected to be synchronous and to surface
-    /// PC/SC errors as exceptions (matching PCSCConnection's
-    /// long-standing contract).
-    virtual Internal::APDUResponse transmit(const Internal::APDUCommand& cmd) = 0;
+    /// Implementations are synchronous. A failed exchange is the error, never
+    /// an exception; an answer of the card, whatever its status word, is the
+    /// value.
+    virtual std::expected<Internal::APDUResponse, TransportError> transmit(const Internal::APDUCommand& cmd) = 0;
 
     /// Send a pre-encoded command APDU (already-wrapped bytes) to the
     /// card and return the response. Used by SM channel implementations
@@ -49,7 +52,8 @@ public:
     /// SM payloads when the wrapped Lc/Le fell in the extended-encoding
     /// range. PC/SC filter chain is bypassed (mirrors the legacy
     /// PCSCConnection::transmitRaw contract).
-    virtual Internal::APDUResponse transmitRaw(std::span<const std::uint8_t> cmdBytes) = 0;
+    virtual std::expected<Internal::APDUResponse, TransportError>
+    transmitRaw(std::span<const std::uint8_t> cmdBytes) = 0;
 };
 
 } // namespace LibreSCRS::SmartCard

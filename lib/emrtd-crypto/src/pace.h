@@ -9,9 +9,12 @@
 
 #include "types.h"
 
+#include <LibreSCRS/SmartCard/TransportError.h>
+
 #include <expected>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace LibreSCRS::SmartCard {
@@ -51,8 +54,13 @@ enum class PaceFailure {
     Failed,
 };
 
+// What ends a PACE attempt: the card's answer (PaceFailure) or the reader
+// failing to carry an exchange (TransportError).
+using PaceError = std::variant<PaceFailure, LibreSCRS::SmartCard::TransportError>;
+
 // Perform PACE authentication.
-std::expected<SessionKeys, PaceFailure> performPACE(LibreSCRS::SmartCard::IConnection& conn, const PACEParams& params);
+[[nodiscard]] std::expected<SessionKeys, PaceError> performPACE(LibreSCRS::SmartCard::IConnection& conn,
+                                                                const PACEParams& params);
 
 // Map a PACE OID to the SM algorithm it produces
 SMAlgorithm paceOIDToSMAlgorithm(const std::string& oid);

@@ -16,16 +16,20 @@
 
 #include <apdu.h>
 #include <gtest/gtest.h>
+#include <pcsc_classify.h>
 #include <pcsc_connection.h>
 
 #include <cstring>
+#include <expected>
 #include <span>
 #include <vector>
 
 namespace {
 
+using LibreSCRS::SmartCard::TransportError;
 using LibreSCRS::SmartCard::Internal::APDUCommand;
 using LibreSCRS::SmartCard::Internal::PCSCConnection;
+using LibreSCRS::SmartCard::Internal::pcscFailure;
 using LibreSCRS::SmartCard::Internal::verifyPIN;
 
 // Wire log of every APDU the stub receives, plus the scripted replies
@@ -98,7 +102,7 @@ LONG SCardTransmit(SCARDHANDLE, const SCARD_IO_REQUEST*, LPCBYTE pbSendBuffer, D
 TEST_F(Pcsc6cRetryTest, LeLessCommandIsNeverMutatedOn6C)
 {
     PCSCConnection conn(PCSCConnection::DetachedTag{}, "test-reader");
-    conn.reconnect(); // stubbed: activates T=0
+    ASSERT_TRUE(conn.reconnect()); // stubbed: activates T=0
 
     const std::vector<uint8_t> dummyPin = {0xAA, 0xBB, 0xCC, 0xDD};
     const APDUCommand cmd = verifyPIN(0x01, dummyPin);
@@ -113,7 +117,8 @@ TEST_F(Pcsc6cRetryTest, LeLessCommandIsNeverMutatedOn6C)
     // original, and the 6C status reaches the caller.
     ASSERT_EQ(g_sentApdus.size(), 1u);
     EXPECT_EQ(g_sentApdus[0], wire);
-    EXPECT_EQ(response.statusWord(), 0x6C07);
+    ASSERT_TRUE(response);
+    EXPECT_EQ(response->statusWord(), 0x6C07);
 }
 
 // The legitimate 6C flow still works: a command WITH an Le byte is resent
@@ -121,7 +126,7 @@ TEST_F(Pcsc6cRetryTest, LeLessCommandIsNeverMutatedOn6C)
 TEST_F(Pcsc6cRetryTest, LeCommandIsResentWithCorrectedLe)
 {
     PCSCConnection conn(PCSCConnection::DetachedTag{}, "test-reader");
-    conn.reconnect(); // stubbed: activates T=0
+    ASSERT_TRUE(conn.reconnect()); // stubbed: activates T=0
 
     const APDUCommand cmd = LibreSCRS::SmartCard::Internal::readBinary(0x0000, 0x10);
     ASSERT_TRUE(cmd.hasLe);
@@ -133,8 +138,9 @@ TEST_F(Pcsc6cRetryTest, LeCommandIsResentWithCorrectedLe)
     ASSERT_EQ(g_sentApdus.size(), 2u);
     const std::vector<uint8_t> expectedRetry = {0x00, 0xB0, 0x00, 0x00, 0x07};
     EXPECT_EQ(g_sentApdus[1], expectedRetry);
-    EXPECT_TRUE(response.isSuccess());
-    EXPECT_EQ(response.data, (std::vector<uint8_t>{0x01, 0x02, 0x03}));
+    ASSERT_TRUE(response);
+    EXPECT_TRUE(response->isSuccess());
+    EXPECT_EQ(response->data, (std::vector<uint8_t>{0x01, 0x02, 0x03}));
 }
 
 // After SCARD_W_RESET_CARD the connection reconnects and resends a command
@@ -150,12 +156,9 @@ TEST_P(Pcsc6cRetrySensitiveTest, SensitiveCommandIsNeverResentAfterReset)
     const std::vector<uint8_t> apdu = GetParam();
     g_transmitRvs.push_back(static_cast<LONG>(SCARD_W_RESET_CARD));
 
-    try {
-        (void)conn.transmitRaw(std::span<const uint8_t>(apdu));
-        ADD_FAILURE() << "a PIN-carrying command after a reset must not succeed";
-    } catch (const LibreSCRS::SmartCard::Internal::PCSCError& e) {
-        EXPECT_EQ(e.code(), static_cast<LONG>(SCARD_W_RESET_CARD));
-    }
+    const auto response = conn.transmitRaw(std::span<const uint8_t>(apdu));
+    ASSERT_FALSE(response) << "a PIN-carrying command after a reset must not succeed";
+    EXPECT_EQ(response.error().kind, TransportError::Kind::CardReset);
     EXPECT_EQ(g_sentApdus.size(), 1u) << "sent once, never resent";
     EXPECT_EQ(g_reconnects, 1) << "the handle is re-established for the next call";
 }
@@ -179,11 +182,12 @@ TEST_F(Pcsc6cRetryTest, PlainCommandIsResentOnceAfterReset)
 
     EXPECT_EQ(g_sentApdus.size(), 2u);
     EXPECT_EQ(g_reconnects, 1);
-    EXPECT_TRUE(response.isSuccess());
+    ASSERT_TRUE(response);
+    EXPECT_TRUE(response->isSuccess());
 }
 
-// A card that keeps answering 61xx past 64 KiB gets no answer at all: 6700
-// with no data, never the first 64 KiB under a success status word.
+// A card that keeps answering 61xx past 64 KiB is a protocol error: no
+// invented status word, no data, never the first 64 KiB under a success one.
 TEST_F(Pcsc6cRetryTest, GetResponseChainPastTheCapIsNoAnswer)
 {
     PCSCConnection conn(PCSCConnection::DetachedTag{}, "test-reader");
@@ -197,8 +201,8 @@ TEST_F(Pcsc6cRetryTest, GetResponseChainPastTheCapIsNoAnswer)
 
     const auto response = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0x0000, 0x00));
 
-    EXPECT_EQ(response.statusWord(), 0x6700);
-    EXPECT_TRUE(response.data.empty());
+    ASSERT_FALSE(response);
+    EXPECT_EQ(response.error().kind, TransportError::Kind::ProtocolError);
 }
 
 // The connection receives every answer into a buffer its thread keeps for the
@@ -218,9 +222,95 @@ TEST_F(PcscReceiveBufferTest, TheCardsAnswerDoesNotStayInTheReceiveBuffer)
 
     const auto response = conn.transmitRaw(std::span<const uint8_t>(readBinary));
 
-    ASSERT_TRUE(response.isSuccess());
-    EXPECT_EQ(response.data, answer) << "the caller still gets the answer";
+    ASSERT_TRUE(response);
+    ASSERT_TRUE(response->isSuccess());
+    EXPECT_EQ(response->data, answer) << "the caller still gets the answer";
     ASSERT_NE(g_lastRecvBuffer, nullptr);
     const std::vector<uint8_t> left(g_lastRecvBuffer, g_lastRecvBuffer + reply.size());
     EXPECT_EQ(left, std::vector<uint8_t>(reply.size(), 0x00)) << "the answer stayed in the receive buffer";
+}
+
+// A failure of the reader is the value the call returns, classified from the
+// PC/SC code where it arose.
+TEST_F(Pcsc6cRetryTest, ReaderErrorIsAValueOfItsKind)
+{
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "test-reader");
+    conn.setDetachedRawResponder([](std::span<const std::uint8_t>)
+                                     -> std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, TransportError> {
+        return std::unexpected(pcscFailure(SCARD_W_REMOVED_CARD, "x"));
+    });
+
+    const auto r = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0x0000, 0x10));
+
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().kind, TransportError::Kind::NoCardPresent);
+}
+
+// An answer shorter than SW1 SW2 comes back from the reader as a protocol
+// error, not as an invented status word.
+TEST_F(Pcsc6cRetryTest, ShortReaderAnswerIsProtocolError)
+{
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "test-reader");
+    const std::vector<uint8_t> readBinary{0x00, 0xB0, 0x00, 0x00, 0x04};
+    g_scriptedReplies.push_back({0x90});
+
+    const auto r = conn.transmitRaw(std::span<const uint8_t>(readBinary));
+
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().kind, TransportError::Kind::ProtocolError);
+}
+
+// A GET RESPONSE chain broken midway is the error: no part of the data read
+// before the break is handed back.
+TEST_F(Pcsc6cRetryTest, GetResponseChainBrokenMidwayIsTheError)
+{
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "test-reader");
+    g_scriptedReplies.push_back({0x01, 0x02, 0x61, 0x10});
+    g_transmitRvs = {SCARD_S_SUCCESS, static_cast<LONG>(SCARD_F_COMM_ERROR)};
+
+    const auto r = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0x0000, 0x10));
+
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().kind, TransportError::Kind::ProtocolError);
+    EXPECT_EQ(g_sentApdus.size(), 2u);
+}
+
+// A reset during a VERIFY is reported and the command is not sent again; the
+// same reset during a plain read is recovered without the caller noticing.
+TEST_F(Pcsc6cRetryTest, ResetDuringVerifyIsNotReplayed)
+{
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "test-reader");
+    const std::vector<uint8_t> verify{0x00, 0x20, 0x00, 0x01, 0x04, 0xAA, 0xBB, 0xCC, 0xDD};
+    g_transmitRvs.push_back(static_cast<LONG>(SCARD_W_RESET_CARD));
+
+    const auto refused = conn.transmitRaw(std::span<const uint8_t>(verify));
+
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().kind, TransportError::Kind::CardReset);
+    EXPECT_EQ(g_sentApdus.size(), 1u);
+
+    g_sentApdus.clear();
+    g_transmitRvs.push_back(static_cast<LONG>(SCARD_W_RESET_CARD));
+    const std::vector<uint8_t> readBinary{0x00, 0xB0, 0x00, 0x00, 0x04};
+
+    const auto recovered = conn.transmitRaw(std::span<const uint8_t>(readBinary));
+
+    ASSERT_TRUE(recovered);
+    EXPECT_EQ(g_sentApdus.size(), 2u);
+}
+
+// The text a failed VERIFY carries says nothing of the PIN that was sent.
+TEST_F(Pcsc6cRetryTest, FailedVerifyDetailCarriesNoPin)
+{
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "test-reader");
+    const std::vector<uint8_t> pin{0x31, 0x32, 0x33, 0x34};
+    const APDUCommand cmd = verifyPIN(0x01, pin);
+    g_transmitRvs.push_back(static_cast<LONG>(SCARD_W_RESET_CARD));
+
+    const auto r = conn.transmit(cmd);
+
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().detail.find("31 32 33 34"), std::string::npos) << r.error().detail;
+    EXPECT_EQ(r.error().detail.find("1234"), std::string::npos) << r.error().detail;
+    EXPECT_EQ(r.error().detail.find("31323334"), std::string::npos) << r.error().detail;
 }

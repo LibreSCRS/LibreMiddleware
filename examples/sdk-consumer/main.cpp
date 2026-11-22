@@ -137,8 +137,13 @@ int main()
         const auto key = LibreSCRS::Plugin::makeSessionKey(session);
         const std::array<std::uint8_t, 7> selectMasterFile{0x00, 0xA4, 0x00, 0x0C, 0x02, 0x3F, 0x00};
         const auto answer = session.transmit(selectMasterFile);
-        std::cout << "CardSession: generation " << key.generation << ", SELECT MF answered " << answer.size()
-                  << " byte(s)\n";
+        if (answer) {
+            std::cout << "CardSession: generation " << key.generation << ", SELECT MF answered " << answer->size()
+                      << " byte(s)\n";
+        } else {
+            std::cout << "CardSession: generation " << key.generation << ", SELECT MF failed: " << answer.error().detail
+                      << "\n";
+        }
     } else {
         std::cout << "CardSession::open(no such reader) failed as expected\n";
     }

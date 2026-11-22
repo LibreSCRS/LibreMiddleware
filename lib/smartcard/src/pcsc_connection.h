@@ -14,7 +14,7 @@
 #include <span>
 #include <string>
 #include <vector>
-#include <stdexcept>
+#include <expected>
 
 #ifdef __APPLE__
 #include <PCSC/winscard.h>
@@ -34,6 +34,7 @@
 #include "apdu.h"
 #include <LibreSCRS/Export.h>
 #include <smartcard/card_connection.h>
+#include <LibreSCRS/SmartCard/TransportError.h>
 
 namespace LibreSCRS::SmartCard {
 // The single sanctioned opener of a real PC/SC connection (CardSession::open).
@@ -43,23 +44,6 @@ class CardSession;
 } // namespace LibreSCRS::SmartCard
 
 namespace LibreSCRS::SmartCard::Internal {
-
-// Hidden, its typeinfo too. It leaves libLibreSCRS_SmartCard through the
-// CardConnection calls of the card plugins, which catch std::runtime_error;
-// only the library catches it by type. Tests and probes that catch it throw
-// it from their own copy of the connection.
-class PCSCError : public std::runtime_error
-{
-public:
-    PCSCError(const std::string& msg, LONG code) : std::runtime_error(msg), errorCode(code) {}
-    LONG code() const
-    {
-        return errorCode;
-    }
-
-private:
-    LONG errorCode;
-};
 
 // Hidden, every member and its typeinfo. Shipped images reach a connection
 // only through CardConnection (card plugins: transmit, transactions, the ATR,
@@ -87,7 +71,7 @@ public:
     PCSCConnection(const PCSCConnection&) = delete;
     PCSCConnection& operator=(const PCSCConnection&) = delete;
 
-    APDUResponse transmit(const APDUCommand& cmd) override;
+    [[nodiscard]] std::expected<APDUResponse, TransportError> transmit(const APDUCommand& cmd) override;
 
     // Every setter below that ARMS a seam -- setTransmitFilter,
     // clearTransmitFilter, setDetachedRawResponder, setDetachedAtr -- is
@@ -100,7 +84,7 @@ public:
     // wire-logging filter). The members written here and the branches that
     // read them stay in the production class, so the class layout is
     // identical either way.
-    using TransmitFilter = std::function<APDUResponse(const APDUCommand&)>;
+    using TransmitFilter = std::function<std::expected<APDUResponse, TransportError>(const APDUCommand&)>;
     void setTransmitFilter(TransmitFilter filter);
     void clearTransmitFilter();
 
@@ -115,7 +99,7 @@ public:
     // taken and the wire path stays byte-identical; a detached connection with
     // no responder installed falls through to the body's handle-less wire
     // path exactly as before.
-    using RawResponder = std::function<APDUResponse(std::span<const std::uint8_t>)>;
+    using RawResponder = std::function<std::expected<APDUResponse, TransportError>(std::span<const std::uint8_t>)>;
     void setDetachedRawResponder(RawResponder responder);
 
     // Test-only ATR override for DETACHED connections. getATR() calls
@@ -129,19 +113,19 @@ public:
     // detached() AND a non-empty ATR was installed here. A production
     // connection's getATR() path is untouched; a detached connection with
     // no ATR installed keeps failing exactly as before this seam existed
-    // (SCardStatus(0, ...) throws) instead of silently returning {} --
+    // (SCardStatus(0, ...) fails) instead of silently returning {} --
     // callers like CardPlugin::canHandleConnection() depend on that failure
     // to short-circuit before any APDU reaches an un-rigged detached rig.
     void setDetachedAtr(std::vector<uint8_t> atr);
 
     // Test-only transaction failure for DETACHED connections. beginTransaction()
     // short-circuits on a detached connection and returns without
-    // touching the null handle, so the throwing branch it takes on real
+    // touching the null handle, so the failing branch it takes on real
     // hardware -- removed card, reset card, reader unavailable, sharing
     // violation -- is unreachable from any test, and a caller whose duty is to
-    // CONTAIN that throw has no way to prove that it does. Armed with a
-    // non-zero PC/SC status, a detached beginTransaction() throws PCSCError
-    // carrying it instead of returning. A production connection has a card,
+    // CONTAIN that failure has no way to prove that it does. Armed with a
+    // non-zero PC/SC status, a detached beginTransaction() returns the
+    // TransportError that status classifies to instead of succeeding. A production connection has a card,
     // so the branch is never taken and the transaction path stays identical.
     void setDetachedTransactionFailure(LONG rv);
 
@@ -158,13 +142,14 @@ public:
 
     // Low-level transmit that bypasses the TransmitFilter.
     // Used by SM layer to send already-wrapped APDUs without recursive filtering.
-    APDUResponse transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen);
-    APDUResponse transmitRaw(const APDUCommand& cmd);
+    [[nodiscard]] std::expected<APDUResponse, TransportError> transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen);
+    [[nodiscard]] std::expected<APDUResponse, TransportError> transmitRaw(const APDUCommand& cmd);
 
     // IConnection override — forwards to the byte-pointer transmitRaw above.
-    APDUResponse transmitRaw(std::span<const std::uint8_t> cmdBytes) override;
+    [[nodiscard]] std::expected<APDUResponse, TransportError>
+    transmitRaw(std::span<const std::uint8_t> cmdBytes) override;
 
-    void reconnect() override; // prefers T=1, falls back to T=0
+    [[nodiscard]] std::expected<void, TransportError> reconnect() override; // prefers T=1, falls back to T=0
 
     // SCardReconnect with SCARD_RESET_CARD: a cold restart of the card
     // session. Some platforms answer 6A86 to every SELECT once a non-file-
@@ -172,8 +157,8 @@ public:
     // down other SCARD_SHARE_SHARED sessions' state, so it is for
     // diagnostic tools that own the bench — production code keeps using
     // reconnect() (SCARD_LEAVE_CARD).
-    void reconnectWithReset();
-    std::vector<uint8_t> getATR() const override;
+    [[nodiscard]] std::expected<void, TransportError> reconnectWithReset();
+    [[nodiscard]] std::expected<std::vector<uint8_t>, TransportError> getATR() const override;
     const std::string& readerName() const
     {
         return storedReaderName;
@@ -181,12 +166,12 @@ public:
 
     // Acquire / release an exclusive PC/SC transaction on the card.
     // While a transaction is held, other connections' SCardTransmit calls block.
-    // endTransaction() never throws; it is safe to call even after reconnect().
+    // endTransaction() never fails; it is safe to call even after reconnect().
     //
     // beginTransaction() records the transaction as held once it is taken,
     // endTransaction() clears the record before releasing it. Call sites use
     // the RAII CardTransaction wrapper (smartcard/card_connection.h).
-    void beginTransaction() override;
+    [[nodiscard]] std::expected<void, TransportError> beginTransaction() override;
     void endTransaction() noexcept override;
 
     /// @brief True iff at least one live `CardTransaction` (or a balanced
@@ -200,16 +185,20 @@ public:
         return callerHoldsTransaction;
     }
 
-    static std::vector<std::string> listReaders();
+    [[nodiscard]] static std::expected<std::vector<std::string>, TransportError> listReaders();
 
 private:
-    // Real reader-name ctor: opens a live PC/SC handle. Private so the only
-    // production opener is CardSession (the single-session keystone).
+    // Opens a live PC/SC handle. Private so the only production opener is
+    // CardSession (the single-session keystone).
     // Hardware probes and diagnostic tools reach it through
     // openRawDiagnostic(), friended below: that function is declared in
     // raw_diagnostic/pcsc_raw_diagnostic.h and defined only in the
     // build-tree-only LibreSCRS_SmartCard_RawDiagnostic archive, so a library
     // source can neither name it from this header nor link it.
+    [[nodiscard]] static std::expected<std::unique_ptr<PCSCConnection>, TransportError>
+    open(const std::string& readerName);
+
+    // Names the reader and holds no handle yet; connect() takes it.
     explicit PCSCConnection(const std::string& readerName);
 
     // The body of the platform (pcsc_connection_pcsc.cpp or
@@ -218,13 +207,17 @@ private:
 
     // A DetachedTag connection: no handle, no card.
     LIBRESCRS_INTERNAL bool detached() const noexcept;
+    // Takes the handle for storedReaderName.
+    LIBRESCRS_INTERNAL std::expected<void, TransportError> connect();
     // One command on the wire; the reply including its status word. No value:
     // the card was reset, or its session lost with the card still in the
-    // reader, and the command was not answered. Any other failure throws.
-    LIBRESCRS_INTERNAL std::optional<std::vector<std::uint8_t>> exchangeWire(std::span<const std::uint8_t> command);
-    LIBRESCRS_INTERNAL void beginOnCard();
+    // reader, and the command was not answered (a CardReset error); any other
+    // failure is its own error.
+    LIBRESCRS_INTERNAL std::expected<std::vector<std::uint8_t>, TransportError>
+    exchangeWire(std::span<const std::uint8_t> command);
+    LIBRESCRS_INTERNAL std::expected<void, TransportError> beginOnCard();
     LIBRESCRS_INTERNAL void endOnCard() noexcept;
-    LIBRESCRS_INTERNAL std::vector<uint8_t> atrFromCard() const;
+    LIBRESCRS_INTERNAL std::expected<std::vector<uint8_t>, TransportError> atrFromCard() const;
 
     TransmitFilter transmitFilter;
     RawResponder detachedRawResponder;
@@ -248,7 +241,8 @@ private:
     LONG detachedTransactionRv = SCARD_S_SUCCESS;
     std::function<void()> detachedReleaseObserver;
     friend class ::LibreSCRS::SmartCard::CardSession;
-    friend std::unique_ptr<PCSCConnection> openRawDiagnostic(const std::string& readerName);
+    friend std::expected<std::unique_ptr<PCSCConnection>, TransportError>
+    openRawDiagnostic(const std::string& readerName);
 };
 
 } // namespace LibreSCRS::SmartCard::Internal

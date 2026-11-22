@@ -18,6 +18,7 @@ using LibreSCRS::SecureChannel::ChannelState;
 using LibreSCRS::SecureChannel::PlainChannel;
 using LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection;
 using LibreSCRS::SmartCard::AppletAid;
+using LibreSCRS::SmartCard::TransportError;
 using LibreSCRS::SmartCard::Internal::APDUCommand;
 using LibreSCRS::SmartCard::Internal::APDUResponse;
 
@@ -62,7 +63,8 @@ TEST(PlainChannelTests, ForwardsApduToConnectionUnchanged)
 
     ASSERT_EQ(fakeConn.history().size(), 1u);
     EXPECT_EQ(fakeConn.history()[0].toBytes(), cmd.toBytes());
-    EXPECT_EQ(response.statusWord(), 0x9000);
+    ASSERT_TRUE(response.has_value());
+    EXPECT_EQ(response->statusWord(), 0x9000);
 }
 
 TEST(PlainChannelTests, ReportsAppletAidAndOpenStateAtConstruction)
@@ -75,7 +77,7 @@ TEST(PlainChannelTests, ReportsAppletAidAndOpenStateAtConstruction)
     EXPECT_EQ(channel.state(), ChannelState::Open);
 }
 
-TEST(PlainChannelTests, CloseTransitionsToClosedAndSuppressesTransmit)
+TEST(PlainChannelTests, AClosedChannelIsUnusableAndSendsNothing)
 {
     auto aid = makeTestAid();
     FakePCSCConnection fakeConn;
@@ -86,7 +88,8 @@ TEST(PlainChannelTests, CloseTransitionsToClosedAndSuppressesTransmit)
 
     auto response = channel.transmit(makeSelectMf(), CancelToken{});
     EXPECT_TRUE(fakeConn.history().empty());
-    EXPECT_EQ(response.statusWord(), 0x6F00); // sentinel for closed
+    ASSERT_FALSE(response.has_value());
+    EXPECT_EQ(response.error().kind, TransportError::Kind::ChannelUnusable);
 }
 
 TEST(PlainChannelTests, CloseIsIdempotent)
@@ -103,7 +106,7 @@ TEST(PlainChannelTests, CloseIsIdempotent)
     EXPECT_TRUE(fakeConn.history().empty());
 }
 
-TEST(PlainChannelTests, RespectsCancelToken)
+TEST(PlainChannelTests, ACancelledTokenSendsNothingAndLeavesTheChannelOpen)
 {
     auto aid = makeTestAid();
     FakePCSCConnection fakeConn;
@@ -115,7 +118,9 @@ TEST(PlainChannelTests, RespectsCancelToken)
 
     auto response = channel.transmit(makeSelectMf(), token);
     EXPECT_TRUE(fakeConn.history().empty());
-    EXPECT_EQ(response.statusWord(), 0x6F01); // sentinel for cancelled
+    ASSERT_FALSE(response.has_value());
+    EXPECT_EQ(response.error().kind, TransportError::Kind::Cancelled);
+    EXPECT_EQ(channel.state(), ChannelState::Open);
 }
 
 TEST(PlainChannelTests, DefaultCancelTokenDoesNotInterfere)
@@ -129,5 +134,21 @@ TEST(PlainChannelTests, DefaultCancelTokenDoesNotInterfere)
 
     auto response = channel.transmit(makeSelectMf(), CancelToken{});
     EXPECT_EQ(fakeConn.history().size(), 1u);
-    EXPECT_EQ(response.statusWord(), 0x9000);
+    ASSERT_TRUE(response.has_value());
+    EXPECT_EQ(response->statusWord(), 0x9000);
+}
+
+TEST(PlainChannelTests, AReaderErrorIsReturnedAndTheChannelStaysOpen)
+{
+    FakePCSCConnection fakeConn;
+    fakeConn.setResponder([](const auto&) {
+        return std::unexpected(TransportError{TransportError::Kind::NoCardPresent, "card removed"});
+    });
+    PlainChannel channel(fakeConn, makeTestAid());
+
+    auto response = channel.transmit(makeSelectMf(), CancelToken{});
+
+    ASSERT_FALSE(response.has_value());
+    EXPECT_EQ(response.error().kind, TransportError::Kind::NoCardPresent);
+    EXPECT_EQ(channel.state(), ChannelState::Open);
 }

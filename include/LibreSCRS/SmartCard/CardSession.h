@@ -21,6 +21,7 @@
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS/SmartCard/ChipAuthentication.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
+#include <LibreSCRS/SmartCard/TransportError.h>
 
 #include <cstdint>
 #include <expected>
@@ -323,6 +324,13 @@ public:
     ///       mutex and PC/SC transaction; see @ref ActiveChannelHolder
     ///       for the lifetime contract.
     ///
+    /// A reader that fails to carry an exchange (card removed, reader gone,
+    /// session refused) is reported as @c ReaderError; a channel that cannot
+    /// carry the applet SELECT is @c SelectAppletFailed. A token that fires
+    /// at any point gives @c Cancelled: commands sent before the token was
+    /// observed may already have reached the card, the next one is not sent,
+    /// and the installed channel stays as the last exchange left it.
+    ///
     /// @throws std::bad_alloc on out-of-memory during channel construction
     ///         or transaction setup. All other failure modes are surfaced
     ///         through the returned @c std::expected.
@@ -335,6 +343,21 @@ public:
     ///        (PACE or BAC). On cache miss the credential provider is
     ///        invoked; on @c PaceWrongSecret the cache entry is evicted
     ///        and the prompt re-issued up to a small retry cap.
+    ///
+    /// A reader that fails to carry an exchange is reported as
+    /// @c ReaderError, never as a wrong secret, a missing capability or a
+    /// downgrade, in each of these places:
+    ///  - the PACE or BAC handshake;
+    ///  - the EF.CardAccess read that precedes PACE (no CAN or other secret
+    ///    is requested then);
+    ///  - the EF.CardAccess re-read and the applet re-SELECT through the BAC
+    ///    tunnel that check for a forged PACE-less verdict (the tunnel is
+    ///    torn down). A tunnel that cannot carry that check, or whose answer
+    ///    fails its integrity check, is @c PaceDowngradeDetected.
+    /// A token that fires at any point gives @c Cancelled: commands sent
+    /// before the token was observed may already have reached the card, the
+    /// next one is not sent, and the installed channel stays as the last
+    /// exchange left it.
     ///
     /// @note The returned @ref ActiveChannelHolder borrows this session's
     ///       mutex and PC/SC transaction; see @ref ActiveChannelHolder
@@ -393,12 +416,12 @@ public:
     ///      @ref ChipAuthOutcome::NotPerformed with
     ///      @ref ChipAuthReason::NoUsableChannel.
     ///
+    /// A reader or connection failure during the run, on either path, is
+    /// @ref ChipAuthOutcome::NotPerformed with @ref ChipAuthReason::ReaderError.
+    /// After it the channel's secure messaging may be out of step with the
+    /// card: clear the channel before reusing the session.
+    ///
     /// @throws std::bad_alloc on out-of-memory.
-    /// @throws std::runtime_error (the transport's error type) when the reader
-    ///         fails or the card goes away during the run, on either path; no
-    ///         verdict is reported then. After a throw the channel's secure
-    ///         messaging may be out of step with the card: clear the channel
-    ///         before reusing the session.
     ///
     /// @par Example
     /// @code
@@ -473,18 +496,26 @@ public:
     /// The command takes the path the session's channel dictates:
     /// - an open channel (secure-messaging or plain) carries it: under secure
     ///   messaging it is wrapped, and the answer is unwrapped and verified;
-    /// - an installed secure-messaging channel that is no longer open (it
-    ///   failed on a bad MAC or a 6987/6988 answer, or was closed) refuses
-    ///   every command, from any thread: the answer is @c 6F02 and nothing is
-    ///   sent. The call never drops that channel, so a command the caller
-    ///   meant to be protected never goes plain. It stays until
+    /// - an installed channel that is not open (a secure-messaging one failed
+    ///   on a bad MAC, a reader error or a 6987/6988 answer, or was closed; a
+    ///   plain one was closed) refuses every command, from any thread:
+    ///   @ref TransportError::Kind::ChannelUnusable, nothing sent. The call
+    ///   never drops that channel, so a command the caller meant to be
+    ///   protected never goes plain. It stays until
     ///   @ref discardFailedChannel, @ref clearActiveChannel or the activation
     ///   of another channel (@ref activateChannelFor,
     ///   @ref activateChannelWithSm) removes it;
-    /// - otherwise (no channel, or a plain one that is not open) it goes to the
-    ///   card plain. The reader layer completes the exchange as the card asks:
-    ///   it fetches a chained answer (status word @c 61xx, GET RESPONSE) and,
-    ///   on a T=0 card, resends with the length a @c 6Cxx answer names.
+    /// - with no channel the command goes to the card plain. The reader layer
+    ///   completes the exchange as the card asks: it fetches a chained answer
+    ///   (status word @c 61xx, GET RESPONSE; once the card has answered, that
+    ///   continuation is not interrupted by the token) and, on a T=0 card,
+    ///   resends with the length a @c 6Cxx answer names.
+    ///
+    /// A card's own answer is the value, whatever its status word (6987/6988
+    /// and 6F00 included). A reader error during an exchange under secure
+    /// messaging, and a response that fails the MAC check
+    /// (@ref TransportError::Kind::IntegrityFailure), fail the channel: the
+    /// next call is @ref TransportError::Kind::ChannelUnusable.
     ///
     /// @param apdu  The command, encoded per ISO/IEC 7816-4 with the shortest
     ///              length fields that carry it: short (one-byte Lc and Le,
@@ -495,18 +526,22 @@ public:
     ///              accepts only bytes that encode back to themselves: an
     ///              extended field where a short one suffices, or an extended
     ///              Le of @c 0000, is valid ISO/IEC 7816-4 but refused.
-    /// @param token Cancellation, handed to the channel: an open channel
-    ///              answers @c 6F01 without sending once it is cancelled.
-    /// @return The answer: response data followed by SW1 SW2.
+    /// @param token Cancellation, checked before the command is sent on every
+    ///              path (no channel, plain, secure messaging): a fired token
+    ///              is @ref TransportError::Kind::Cancelled, nothing sent and
+    ///              the channel state unchanged.
+    /// @return The answer: response data followed by SW1 SW2; the error when
+    ///         the exchange could not complete (the kind says why: the reader
+    ///         failed, the card went away or was reset, the channel is
+    ///         unusable, cancelled), or when @p apdu is not a command APDU in
+    ///         the encoding described for @p apdu
+    ///         (@ref TransportError::Kind::InvalidCommand, nothing sent).
     ///
     /// A SELECT that leaves the application the session's channel was
     /// activated for makes the session forget that application first, as
     /// @ref forgetCurrentApplet describes.
     ///
-    /// @throws std::invalid_argument when @p apdu is not a command APDU in the
-    ///         encoding described for @p apdu; nothing is sent.
-    /// @throws std::runtime_error when the reader fails or the card goes away
-    ///         during the exchange.
+    /// @throws std::bad_alloc on out-of-memory.
     ///
     /// @par Thread-safety
     /// The call may be made by the thread that holds this session's
@@ -522,12 +557,23 @@ public:
     /// const std::uint8_t select[] = {0x00, 0xA4, 0x04, 0x0C, 0x07,
     ///                                0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
     /// const auto answer = session.transmit(select);
-    /// const bool ok = answer.size() >= 2 && answer[answer.size() - 2] == 0x90 && answer.back() == 0x00;
+    /// if (answer) {
+    ///     // answer->data() ends with SW1 SW2; 90 00 is success.
+    /// } else {
+    ///     switch (answer.error().kind) {
+    ///     case TransportError::Kind::Cancelled:
+    ///         break; // the token fired; nothing was sent
+    ///     case TransportError::Kind::CardReset:
+    ///         break; // the card lost its state: start the operation over
+    ///     default:
+    ///         break; // the reader or the channel failed; answer.error().detail is for the log
+    ///     }
+    /// }
     /// @endcode
     ///
     /// @since 5.0
-    [[nodiscard]] std::vector<std::uint8_t> transmit(std::span<const std::uint8_t> apdu,
-                                                     LibreSCRS::CancelToken token = {});
+    [[nodiscard]] std::expected<std::vector<std::uint8_t>, TransportError> transmit(std::span<const std::uint8_t> apdu,
+                                                                                    LibreSCRS::CancelToken token = {});
 
     /// @brief Send one command APDU to the card exactly as given, as a single
     ///        exchange, unless a secure-messaging channel is live.
@@ -535,34 +581,38 @@ public:
     /// For callers that do their own APDU handling (a status word @c 61xx or
     /// @c 6Cxx comes back as is; no GET RESPONSE follows). While the session
     /// holds an open secure-messaging channel (see @ref hasLiveSecureChannel)
-    /// nothing is sent and the answer is @c 6F02: a plain command would end the
-    /// card's secure-messaging session. Use @ref transmit to reach the card
-    /// through that channel. A secure-messaging channel that is no longer open
-    /// refuses the bytes too (@c 6F02, nothing sent), from any thread, until
-    /// it is removed (see @ref transmit). A SELECT leaving the channel's
+    /// nothing is sent and the error is
+    /// @ref TransportError::Kind::SecureChannelActive: a plain command would
+    /// end the card's secure-messaging session. Use @ref transmit to reach the
+    /// card through that channel. A secure-messaging channel that is no longer
+    /// open refuses the bytes too (@ref TransportError::Kind::ChannelUnusable,
+    /// nothing sent), from any thread, until it is removed (see
+    /// @ref transmit). Under a plain channel the bytes go to the card. A SELECT leaving the channel's
     /// application makes the session forget it, as with @ref transmit, in
     /// either length form; one whose data field cannot be located counts as
     /// leaving.
     ///
     /// @param apdu The command bytes, sent unchanged.
-    /// @return The answer: response data followed by SW1 SW2. @c 6F02 when a
-    ///         secure-messaging channel refuses it (see above).
+    /// @return The answer: response data followed by SW1 SW2; the error when a
+    ///         secure-messaging channel refuses it (see above) or the exchange
+    ///         could not complete (the reader failed or the card went away).
     ///
-    /// @throws std::runtime_error when the reader fails or the card goes away
-    ///         during the exchange.
+    /// @throws std::bad_alloc on out-of-memory.
     ///
     /// @par Thread-safety
     /// As @ref transmit.
     ///
     /// @since 5.0
-    [[nodiscard]] std::vector<std::uint8_t> transmitRaw(std::span<const std::uint8_t> apdu);
+    [[nodiscard]] std::expected<std::vector<std::uint8_t>, TransportError>
+    transmitRaw(std::span<const std::uint8_t> apdu);
 
     /// @brief Remove a secure-messaging channel that is no longer open, so
     ///        that plain commands reach the card again.
     ///
-    /// A channel that failed (a bad MAC, a 6987/6988 answer) or was closed
+    /// A channel that failed (a bad MAC, a 6987/6988 answer, a reader error
+    /// during an exchange under secure messaging) or was closed
     /// makes @ref transmit and @ref transmitRaw refuse every command
-    /// (@c 6F02); the card has ended, or will end on its next answer, that
+    /// (@ref TransportError::Kind::ChannelUnusable); the card has ended, or will end on its next answer, that
     /// secure-messaging session. A host calls this at a point where it starts
     /// a new, plain interaction with the card and no earlier operation's
     /// commands can follow -- before it identifies the card, say.
@@ -614,11 +664,15 @@ public:
     /// For a card whose context was lost (it answers every command with an
     /// error after an interruption). The card is not reset, so other
     /// applications' connections to it and an open secure-messaging channel
-    /// survive.
+    /// survive. The channel's state is never changed here: a secure-messaging
+    /// channel that failed (a reader error marks it failed when it occurs)
+    /// stays failed after a successful reconnect, and the next
+    /// @ref transmit is @ref TransportError::Kind::ChannelUnusable until the
+    /// channel is discarded or replaced.
     ///
-    /// @throws std::runtime_error when the card cannot be reached.
+    /// @return Nothing, or the error when the card cannot be reached.
     /// @since 5.0
-    void reconnect();
+    [[nodiscard]] std::expected<void, TransportError> reconnect();
 
     /// @brief Take exclusive use of the card: no other application's commands
     ///        reach it until @ref endTransaction.
@@ -629,10 +683,10 @@ public:
     /// lifetime of the @ref ActiveChannelHolder they return; while
     /// @ref isTransactionHeld is true, do not begin another.
     ///
-    /// @throws std::runtime_error when the reader refuses (the card was removed
-    ///         or reset, or another application holds it).
+    /// @return Nothing, or the error when the reader refuses (the card was
+    ///         removed or reset, or another application holds it).
     /// @since 5.0
-    void beginTransaction();
+    [[nodiscard]] std::expected<void, TransportError> beginTransaction();
 
     /// @brief End one exclusive use @ref beginTransaction took. With none
     ///        outstanding it has no effect.

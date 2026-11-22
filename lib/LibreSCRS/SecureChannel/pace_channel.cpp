@@ -9,6 +9,7 @@
 #include "secure_messaging.h"
 
 #include <LibreSCRS/Secure/Buffer.h>
+#include <LibreSCRS_internal/SmartCard/ActivationError.h>
 
 #include <openssl/crypto.h>
 
@@ -16,6 +17,7 @@
 #include <cstdint>
 #include <span>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace LibreSCRS::SecureChannel {
@@ -37,7 +39,7 @@ ChannelState PaceChannel::state() const noexcept
     return pImpl->state();
 }
 
-LibreSCRS::SmartCard::Internal::APDUResponse
+std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError>
 PaceChannel::transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token)
 {
     return pImpl->transmit(cmd, std::move(token));
@@ -102,8 +104,8 @@ PaceChannel::establish(LibreSCRS::SmartCard::IConnection& connection, const Pace
         cryptoParams.password.assign(view.begin(), view.end());
         cryptoParams.paramId = static_cast<int>(params.paramId);
 
-        std::expected<emrtd::crypto::SessionKeys, emrtd::crypto::PaceFailure> derived =
-            std::unexpected{emrtd::crypto::PaceFailure::Failed};
+        std::expected<emrtd::crypto::SessionKeys, emrtd::crypto::PaceError> derived =
+            std::unexpected{emrtd::crypto::PaceError{emrtd::crypto::PaceFailure::Failed}};
         try {
             derived = emrtd::crypto::performPACE(connection, cryptoParams);
         } catch (...) {
@@ -126,7 +128,11 @@ PaceChannel::establish(LibreSCRS::SmartCard::IConnection& connection, const Pace
             // which the retry contract answers by evicting the cached
             // secret and prompting again; the card's General Authenticate
             // answers do not tell a wrong secret from other refusals.
-            if (derived.error() == emrtd::crypto::PaceFailure::MechanismRefused)
+            if (const auto* transport = std::get_if<LibreSCRS::SmartCard::TransportError>(&derived.error())) {
+                return std::unexpected{LibreSCRS::SmartCard::Internal::activationErrorFor(
+                    *transport, LibreSCRS::SmartCard::Internal::ActivationStep::Other)};
+            }
+            if (std::get<emrtd::crypto::PaceFailure>(derived.error()) == emrtd::crypto::PaceFailure::MechanismRefused)
                 return std::unexpected{ChannelActivationError::PaceUnsupported};
             return std::unexpected{ChannelActivationError::PaceWrongSecret};
         }

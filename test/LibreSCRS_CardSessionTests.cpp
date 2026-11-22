@@ -533,3 +533,221 @@ TEST(CardSessionRejectedRetryReason, FirstPromptCarriesNoRejectedReason)
         EXPECT_FALSE(first->hasReason) << "PACE first prompt must carry the empty reason";
     }
 }
+
+// -- Activation reports the reader's failures as values ----------------------
+//
+// A reader that fails to carry an exchange during activation is ReaderError,
+// whatever the step, and a token that fires after the entry check is
+// Cancelled; neither escapes as an exception.
+
+#include <LibreSCRS/CancelToken.h>
+#include <LibreSCRS_internal/SmartCard/ActivationError.h>
+
+#include <chrono>
+#include <thread>
+
+namespace {
+
+using ActivationError = LibreSCRS::SecureChannel::ChannelActivationError;
+using LibreSCRS::SmartCard::TransportError;
+
+TransportError cardLeftTheField()
+{
+    return TransportError{TransportError::Kind::NoCardPresent, "scripted: the card left the field"};
+}
+
+// @p card answers; @p fails decides which commands the reader cannot carry.
+template <class Card, class Fails>
+void armReader(CardSession& session, Card& card, Fails fails)
+{
+    LibreSCRS::SmartCard::Internal::connectionOf(session).setTransmitFilter(
+        [&card, fails](const APDUCommand& cmd) -> std::expected<APDUResponse, TransportError> {
+            if (fails(cmd))
+                return std::unexpected(cardLeftTheField());
+            return card(cmd);
+        });
+}
+
+// Every row of the mapping from a transport failure to the activation error.
+constexpr ActivationError mapped(TransportError::Kind kind, LibreSCRS::SmartCard::Internal::ActivationStep step)
+{
+    return LibreSCRS::SmartCard::Internal::activationErrorFor(TransportError{kind, {}}, step);
+}
+using Kind = TransportError::Kind;
+using Step = LibreSCRS::SmartCard::Internal::ActivationStep;
+static_assert(mapped(Kind::ReaderUnavailable, Step::Other) == ActivationError::ReaderError);
+static_assert(mapped(Kind::NoCardPresent, Step::Other) == ActivationError::ReaderError);
+static_assert(mapped(Kind::CardReset, Step::Other) == ActivationError::ReaderError);
+static_assert(mapped(Kind::ProtocolError, Step::Other) == ActivationError::ReaderError);
+static_assert(mapped(Kind::SessionRefused, Step::Other) == ActivationError::ReaderError);
+static_assert(mapped(Kind::NoCardPresent, Step::SelectApplet) == ActivationError::ReaderError);
+static_assert(mapped(Kind::Cancelled, Step::Other) == ActivationError::Cancelled);
+static_assert(mapped(Kind::Cancelled, Step::SelectApplet) == ActivationError::Cancelled);
+static_assert(mapped(Kind::ChannelUnusable, Step::SelectApplet) == ActivationError::SelectAppletFailed);
+static_assert(mapped(Kind::IntegrityFailure, Step::SelectApplet) == ActivationError::SelectAppletFailed);
+static_assert(mapped(Kind::ChannelUnusable, Step::DowngradeCheck) == ActivationError::PaceDowngradeDetected);
+static_assert(mapped(Kind::IntegrityFailure, Step::DowngradeCheck) == ActivationError::PaceDowngradeDetected);
+static_assert(mapped(Kind::NoCardPresent, Step::DowngradeCheck) == ActivationError::ReaderError);
+static_assert(mapped(Kind::InvalidCommand, Step::Other) == ActivationError::Internal);
+static_assert(mapped(Kind::InvalidCommand, Step::SelectApplet) == ActivationError::Internal);
+static_assert(mapped(Kind::SecureChannelActive, Step::Other) == ActivationError::Internal);
+static_assert(mapped(Kind::SecureChannelActive, Step::SelectApplet) == ActivationError::Internal);
+
+const LibreSCRS::SmartCard::AppletAid kActivationAid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
+
+} // namespace
+
+TEST(CardSessionActivation, AReaderErrorDuringPaceIsReaderError)
+{
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted PACE Reader");
+    TwoOidPaceCard card;
+    card.mseSw = {0x9000};
+    armReader(*session, card, [](const APDUCommand& cmd) { return cmd.ins == 0x86; });
+    int prompts = 0;
+    session->setCredentialProvider([&prompts](const LibreSCRS::Auth::AuthRequirement&) {
+        ++prompts;
+        std::vector<LibreSCRS::Auth::CredentialEntry> values;
+        values.push_back({"can", LibreSCRS::Secure::String{"123456"}});
+        return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
+    });
+
+    auto r = session->activateChannelWithSm(kActivationAid,
+                                            LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can},
+                                            LibreSCRS::CancelToken{});
+
+    ASSERT_FALSE(r.has_value());
+    EXPECT_EQ(r.error(), ActivationError::ReaderError);
+    EXPECT_EQ(prompts, 1) << "a reader that failed is not a wrong secret: no re-prompt";
+}
+
+TEST(CardSessionActivation, AReaderErrorReadingCardAccessBeforePaceDoesNotAskForCan)
+{
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted PACE Reader");
+    TwoOidPaceCard card;
+    card.mseSw = {0x9000};
+    armReader(*session, card, [](const APDUCommand& cmd) { return cmd.ins == 0xA4 && cmd.p1 == 0x00; });
+    int prompts = 0;
+    session->setCredentialProvider([&prompts](const LibreSCRS::Auth::AuthRequirement&) {
+        ++prompts;
+        return LibreSCRS::Auth::CredentialResult::cancelled();
+    });
+
+    auto r = session->activateChannelWithSm(kActivationAid,
+                                            LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can},
+                                            LibreSCRS::CancelToken{});
+
+    ASSERT_FALSE(r.has_value());
+    EXPECT_EQ(r.error(), ActivationError::ReaderError);
+    EXPECT_EQ(prompts, 0) << "an unreadable EF.CardAccess is not an Unknown capability to ask a CAN for";
+}
+
+TEST(CardSessionActivation, AReaderErrorDuringBacHandshakeIsReaderError)
+{
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted BAC Reader");
+    armReader(*session, bacWrongSecretFilter, [](const APDUCommand& cmd) { return cmd.ins == 0x82; });
+    LibreSCRS::SecureChannel::BacInput input;
+    input.documentNumber = LibreSCRS::Secure::String{"L898902C"};
+    input.dateOfBirth = LibreSCRS::Secure::String{"690806"};
+    input.dateOfExpiry = LibreSCRS::Secure::String{"940623"};
+    session->setBacInput(std::move(input));
+
+    auto r =
+        session->activateChannelWithSm(kActivationAid, LibreSCRS::SmartCard::BacRequest{}, LibreSCRS::CancelToken{});
+
+    ASSERT_FALSE(r.has_value());
+    EXPECT_EQ(r.error(), ActivationError::ReaderError);
+}
+
+TEST(CardSessionActivation, AWrongMrzIsStillWrongSecret)
+{
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted BAC Reader");
+    LibreSCRS::SmartCard::Internal::connectionOf(*session).setTransmitFilter(bacWrongSecretFilter);
+    session->setCredentialProvider([](const LibreSCRS::Auth::AuthRequirement&) {
+        std::vector<LibreSCRS::Auth::CredentialEntry> values;
+        values.push_back({"documentNumber", LibreSCRS::Secure::String{"L898902C"}});
+        values.push_back({"dateOfBirth", LibreSCRS::Secure::String{"690806"}});
+        values.push_back({"dateOfExpiry", LibreSCRS::Secure::String{"940623"}});
+        return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
+    });
+
+    auto r =
+        session->activateChannelWithSm(kActivationAid, LibreSCRS::SmartCard::BacRequest{}, LibreSCRS::CancelToken{});
+
+    ASSERT_FALSE(r.has_value());
+    EXPECT_EQ(r.error(), ActivationError::PaceWrongSecret);
+}
+
+TEST(CardSessionActivation, AReaderErrorOnThePlainSelectIsReaderError)
+{
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Reader");
+    armReader(*session, pacelessCardFilter, [](const APDUCommand& cmd) { return cmd.ins == 0xA4; });
+
+    auto r = session->activateChannelFor(kActivationAid, LibreSCRS::CancelToken{});
+
+    ASSERT_FALSE(r.has_value());
+    EXPECT_EQ(r.error(), ActivationError::ReaderError);
+}
+
+// The token fires while activateChannelFor waits for the session (another
+// thread holds the channel), i.e. after its entry check: the SELECT is never
+// sent and the answer is Cancelled, not an exception.
+TEST(CardSessionActivation, ATokenCancelledMidActivationIsCancelledOnThePlainPath)
+{
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Reader");
+    LibreSCRS::SmartCard::Internal::connectionOf(*session).setTransmitFilter(pacelessCardFilter);
+    auto held = session->activateChannelFor(kActivationAid, LibreSCRS::CancelToken{});
+    ASSERT_TRUE(held.has_value());
+    std::optional<LibreSCRS::SmartCard::ActiveChannelHolder> keep{std::move(*held)};
+
+    LibreSCRS::CancelSource source;
+    std::optional<std::expected<LibreSCRS::SmartCard::ActiveChannelHolder, ActivationError>> outcome;
+    bool threw = false;
+    std::thread waiter([&] {
+        try {
+            outcome.emplace(session->activateChannelFor(LibreSCRS::SmartCard::AppletAid{0xA0, 0x00, 0x00, 0x00, 0x63},
+                                                        source.token()));
+        } catch (...) {
+            threw = true;
+        }
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    source.requestCancel();
+    keep.reset();
+    waiter.join();
+
+    EXPECT_FALSE(threw) << "a token that fires during activation must not throw out of it";
+    ASSERT_TRUE(outcome.has_value());
+    ASSERT_FALSE(outcome->has_value());
+    EXPECT_EQ(outcome->error(), ActivationError::Cancelled);
+}
+
+// The credential provider fires the token while the session mutex is dropped;
+// the SELECT that follows it is refused by the dispatcher.
+TEST(CardSessionActivation, ATokenCancelledMidActivationIsCancelledOnTheSmPath)
+{
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted BAC Reader");
+    LibreSCRS::SmartCard::Internal::connectionOf(*session).setTransmitFilter(bacWrongSecretFilter);
+    LibreSCRS::CancelSource source;
+    session->setCredentialProvider([&source](const LibreSCRS::Auth::AuthRequirement&) {
+        source.requestCancel();
+        std::vector<LibreSCRS::Auth::CredentialEntry> values;
+        values.push_back({"documentNumber", LibreSCRS::Secure::String{"L898902C"}});
+        values.push_back({"dateOfBirth", LibreSCRS::Secure::String{"690806"}});
+        values.push_back({"dateOfExpiry", LibreSCRS::Secure::String{"940623"}});
+        return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
+    });
+
+    bool threw = false;
+    std::optional<std::expected<LibreSCRS::SmartCard::ActiveChannelHolder, ActivationError>> outcome;
+    try {
+        outcome.emplace(
+            session->activateChannelWithSm(kActivationAid, LibreSCRS::SmartCard::BacRequest{}, source.token()));
+    } catch (...) {
+        threw = true;
+    }
+
+    EXPECT_FALSE(threw);
+    ASSERT_TRUE(outcome.has_value());
+    ASSERT_FALSE(outcome->has_value());
+    EXPECT_EQ(outcome->error(), ActivationError::Cancelled);
+}

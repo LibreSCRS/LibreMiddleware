@@ -38,8 +38,8 @@ enum class ChipAuthOutcome : std::uint8_t {
     /// tunnel these count because a clone that holds the tunnel keys could
     /// otherwise avoid this verdict by answering badly on purpose. A clone
     /// signal. Never the result of a reader error (an integrity failure is an
-    /// answer from the card, not a reader error; reader errors propagate as
-    /// exceptions), a cancel or a local failure.
+    /// answer from the card; a reader error is @ref ChipAuthReason::ReaderError),
+    /// a cancel or a local failure.
     Failed,
     /// DG14 carries no usable Chip Authentication material.
     NotSupported,
@@ -72,6 +72,12 @@ enum class ChipAuthReason : std::uint8_t {
     /// agreement or key derivation in the local library, or a DG14 key it
     /// cannot use); no evidence about the chip.
     LocalCryptoFailure,
+    /// The reader or the connection failed during the run (the card went
+    /// away, the reader was unplugged, the transport broke): the card gave no
+    /// answer, so there is no evidence about the chip, and never a clone
+    /// verdict.
+    /// @since 5.0
+    ReaderError,
 };
 
 /// @brief Result of @ref CardSession::performChipAuthentication.

@@ -10,6 +10,7 @@
 #include <date_format.h>
 #include <smartcard/card_connection.h>
 #include <smartcard/chunked_read.h>
+#include <smartcard/or_throw.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -116,7 +117,7 @@ std::vector<uint8_t> EuVrcCard::readFile(uint8_t fidHi, uint8_t fidLo)
     // SELECT file: P1=02 P2=04 no Le
     LibreSCRS::SmartCard::Internal::APDUCommand selectCmd{
         .cla = 0x00, .ins = 0xA4, .p1 = 0x02, .p2 = 0x04, .data = {fidHi, fidLo}, .le = 0, .hasLe = false};
-    auto selectResp = conn->transmit(selectCmd);
+    auto selectResp = LibreSCRS::SmartCard::Internal::orThrow(conn->transmit(selectCmd));
     if (!selectResp.isSuccess()) {
         return {}; // File not present
     }

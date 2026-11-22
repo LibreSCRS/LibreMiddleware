@@ -63,8 +63,10 @@ enum class StandInChannel : std::uint8_t {
 /// @brief Install a stand-in secure channel on @p session, replacing any
 ///        channel it holds.
 ///
-/// Commands sent through the stand-in are answered with status word 6F00
-/// and reach no card. The previous channel, if any, is dropped without
+/// Commands sent through the stand-in reach no card and fail:
+/// @ref StandInChannel::FailedSecureMessaging with
+/// @ref TransportError::Kind::ChannelUnusable, the other two with
+/// @ref TransportError::Kind::ReaderUnavailable (there is no card). The previous channel, if any, is dropped without
 /// being closed. No protocol is recorded: @ref CardSession::activatedProtocol
 /// stays empty.
 ///

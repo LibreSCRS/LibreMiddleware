@@ -7,6 +7,7 @@
 #include <apdu.h>
 #include <ber.h>
 #include <smartcard/card_connection.h>
+#include <smartcard/or_throw.h>
 
 namespace euvrc {
 
@@ -49,25 +50,28 @@ namespace {
 bool tryEfDir(LibreSCRS::SmartCard::IConnection& conn)
 {
     // SELECT MF
-    auto mfResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00));
+    auto mfResp = LibreSCRS::SmartCard::Internal::orThrow(
+        conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00)));
     if (!mfResp.isSuccess())
         return false;
 
     // SELECT EF.DIR (2F00) by FID with P1=02 P2=04, no Le
     LibreSCRS::SmartCard::Internal::APDUCommand selectDir{
         .cla = 0x00, .ins = 0xA4, .p1 = 0x02, .p2 = 0x04, .data = {0x2F, 0x00}, .le = 0, .hasLe = false};
-    auto dirResp = conn.transmit(selectDir);
+    auto dirResp = LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(selectDir));
 
     if (!dirResp.isSuccess()) {
         // Fallback: SELECT by path (P1=08)
-        dirResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(0x2F, 0x00));
+        dirResp = LibreSCRS::SmartCard::Internal::orThrow(
+            conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(0x2F, 0x00)));
     }
 
     if (!dirResp.isSuccess())
         return false;
 
     // READ BINARY
-    auto readResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 0xFF));
+    auto readResp =
+        LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 0xFF)));
     if (!readResp.isSuccess() || readResp.data.empty())
         return false;
 
@@ -81,7 +85,7 @@ bool tryEfDir(LibreSCRS::SmartCard::IConnection& conn)
                     if (field.tag == 0x4F && !field.value.empty()) {
                         // Try to SELECT discovered AID
                         auto selectAid = LibreSCRS::SmartCard::Internal::selectByAID(field.value);
-                        auto aidResp = conn.transmit(selectAid);
+                        auto aidResp = LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(selectAid));
                         if (aidResp.isSuccess())
                             return true;
                     }
@@ -98,7 +102,8 @@ bool tryEfDir(LibreSCRS::SmartCard::IConnection& conn)
 // Try a single EU standard AID
 bool tryEuStandardAid(LibreSCRS::SmartCard::IConnection& conn)
 {
-    auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(protocol::EU_VRC_AID));
+    auto resp = LibreSCRS::SmartCard::Internal::orThrow(
+        conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(protocol::EU_VRC_AID)));
     return resp.isSuccess();
 }
 
@@ -118,10 +123,11 @@ bool tryAidSequence(LibreSCRS::SmartCard::IConnection& conn, const AidSequence& 
                                                             .data = seq.selectCommands[i],
                                                             .le = 0,
                                                             .hasLe = false};
-            auto resp = conn.transmit(cmd);
+            auto resp = LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(cmd));
             // Don't check last response — some cards return warnings
         } else {
-            auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(seq.selectCommands[i], p2));
+            auto resp = LibreSCRS::SmartCard::Internal::orThrow(
+                conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(seq.selectCommands[i], p2)));
             if (!resp.isSuccess())
                 return false;
         }

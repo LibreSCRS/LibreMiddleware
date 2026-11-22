@@ -10,6 +10,7 @@
 
 #include <pcsc_connection.h>
 #include <pcsc_raw_diagnostic.h>
+#include <smartcard/or_throw.h>
 
 #include <cstdlib>
 #include <filesystem>
@@ -24,7 +25,8 @@ std::string getReaderName(const CliOptions& opts)
         return opts.readerName;
     }
 
-    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+    auto readers =
+        LibreSCRS::SmartCard::Internal::orThrow(LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders());
     if (readers.empty()) {
         throw std::runtime_error("no PC/SC readers found");
     }
@@ -47,7 +49,8 @@ void writeToFile(const std::string& path, const std::string& content)
 int runPluginMode(const CliOptions& opts)
 {
     auto readerName = getReaderName(opts);
-    auto connOwner = LibreSCRS::SmartCard::Internal::openRawDiagnostic(readerName);
+    auto connOwner =
+        LibreSCRS::SmartCard::Internal::orThrow(LibreSCRS::SmartCard::Internal::openRawDiagnostic(readerName));
     auto& conn = *connOwner;
 
     auto appletInfo = card_mapper::mapPlugin(opts.pluginName, conn, opts.verbose);
@@ -65,7 +68,8 @@ int runPluginMode(const CliOptions& opts)
 int runDiscoverMode(const CliOptions& opts)
 {
     auto readerName = getReaderName(opts);
-    auto connOwner = LibreSCRS::SmartCard::Internal::openRawDiagnostic(readerName);
+    auto connOwner =
+        LibreSCRS::SmartCard::Internal::orThrow(LibreSCRS::SmartCard::Internal::openRawDiagnostic(readerName));
     auto& conn = *connOwner;
 
     // PACE pre-authentication was previously bootstrapped via emrtd::EMRTDCard

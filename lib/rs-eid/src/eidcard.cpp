@@ -9,6 +9,7 @@
 #include "card_verifier.h"
 #include <apdu.h>
 #include <smartcard/card_connection.h>
+#include <smartcard/or_throw.h>
 #include "date_format.h"
 #include "tlv.h"
 
@@ -19,7 +20,7 @@ using LibreSCRS::SmartCard::Internal::formatDateDMY;
 // Init logic for the constructor
 void EIdCard::detectCardType()
 {
-    auto atr = conn->getATR();
+    auto atr = LibreSCRS::SmartCard::Internal::orThrow(conn->getATR());
 
     if (protocol::isGemaltoATR(atr)) {
         cardType = CardReaderGemalto::selectApplication(*conn);
@@ -51,7 +52,7 @@ CardType EIdCard::getCardType() const
 
 DocumentData EIdCard::readDocumentData()
 {
-    LibreSCRS::SmartCard::Internal::CardTransaction tx(*conn);
+    auto tx = LibreSCRS::SmartCard::Internal::orThrow(LibreSCRS::SmartCard::Internal::CardTransaction::begin(*conn));
     auto raw = cardReader->readFile(*conn, protocol::FILE_DOCUMENT_DATA_H, protocol::FILE_DOCUMENT_DATA_L);
     auto fields = LibreSCRS::SmartCard::Internal::parseTLV(raw.data(), raw.size());
 
@@ -68,7 +69,7 @@ DocumentData EIdCard::readDocumentData()
 
 FixedPersonalData EIdCard::readFixedPersonalData()
 {
-    LibreSCRS::SmartCard::Internal::CardTransaction tx(*conn);
+    auto tx = LibreSCRS::SmartCard::Internal::orThrow(LibreSCRS::SmartCard::Internal::CardTransaction::begin(*conn));
     auto raw = cardReader->readFile(*conn, protocol::FILE_PERSONAL_DATA_H, protocol::FILE_PERSONAL_DATA_L);
     auto fields = LibreSCRS::SmartCard::Internal::parseTLV(raw.data(), raw.size());
 
@@ -89,7 +90,7 @@ FixedPersonalData EIdCard::readFixedPersonalData()
 
 VariablePersonalData EIdCard::readVariablePersonalData()
 {
-    LibreSCRS::SmartCard::Internal::CardTransaction tx(*conn);
+    auto tx = LibreSCRS::SmartCard::Internal::orThrow(LibreSCRS::SmartCard::Internal::CardTransaction::begin(*conn));
     auto raw = cardReader->readFile(*conn, protocol::FILE_VARIABLE_DATA_H, protocol::FILE_VARIABLE_DATA_L);
     auto fields = LibreSCRS::SmartCard::Internal::parseTLV(raw.data(), raw.size());
 
@@ -110,7 +111,7 @@ VariablePersonalData EIdCard::readVariablePersonalData()
 
 PhotoData EIdCard::readPortrait()
 {
-    LibreSCRS::SmartCard::Internal::CardTransaction tx(*conn);
+    auto tx = LibreSCRS::SmartCard::Internal::orThrow(LibreSCRS::SmartCard::Internal::CardTransaction::begin(*conn));
     auto raw = cardReader->readFile(*conn, protocol::FILE_PORTRAIT_H, protocol::FILE_PORTRAIT_L);
     // Photo file data has a 4-byte TLV header (tag + length); trim it
     if (raw.size() > 4) {

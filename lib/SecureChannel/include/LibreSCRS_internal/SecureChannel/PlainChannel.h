@@ -20,6 +20,7 @@
 
 #include "apdu.h"
 
+#include <expected>
 #include <utility>
 
 namespace LibreSCRS::SecureChannel {
@@ -60,17 +61,16 @@ public:
         return channelState;
     }
 
-    [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
+    [[nodiscard]] std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError>
     transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token) override
     {
-        if (channelState == ChannelState::Closed) {
-            return sentinel(0x6F, 0x00); // channel closed
-        }
-        if (channelState == ChannelState::Failed) {
-            return sentinel(0x6F, 0x02); // channel failed
+        if (channelState != ChannelState::Open) {
+            return std::unexpected(LibreSCRS::SmartCard::TransportError{
+                LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable, "the plain channel is closed"});
         }
         if (token.isCancellable() && token.isCancelled()) {
-            return sentinel(0x6F, 0x01); // cancelled
+            return std::unexpected(LibreSCRS::SmartCard::TransportError{
+                LibreSCRS::SmartCard::TransportError::Kind::Cancelled, "cancelled before the command was sent"});
         }
         return connection.transmit(cmd);
     }
@@ -101,14 +101,6 @@ protected:
     }
 
 private:
-    static LibreSCRS::SmartCard::Internal::APDUResponse sentinel(std::uint8_t sw1, std::uint8_t sw2)
-    {
-        LibreSCRS::SmartCard::Internal::APDUResponse response;
-        response.sw1 = sw1;
-        response.sw2 = sw2;
-        return response;
-    }
-
     LibreSCRS::SmartCard::IConnection& connection;
     LibreSCRS::SmartCard::AppletAid appletAid;
     ChannelState channelState = ChannelState::Open;

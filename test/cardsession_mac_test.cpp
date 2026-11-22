@@ -27,7 +27,9 @@ TEST(CardSessionMac, UnsignedOpenNamesTheEntitlement)
     EXPECT_EQ(session.error().kind, LibreSCRS::SmartCard::OpenError::Kind::ReaderUnavailable);
     const std::string detail = session.error().diagnosticDetail.value_or("");
     EXPECT_NE(detail.find(LibreSCRS::SmartCard::Internal::Ctk::kNoManagerDetail), std::string::npos) << detail;
-    EXPECT_TRUE(LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders().empty());
+    const auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+    ASSERT_TRUE(readers);
+    EXPECT_TRUE(readers->empty());
 }
 
 // The monitor in the same unsigned process: one Error that names the

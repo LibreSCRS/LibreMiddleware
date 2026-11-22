@@ -9,6 +9,9 @@
 
 #include "types.h"
 
+#include <LibreSCRS/SmartCard/TransportError.h>
+
+#include <expected>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -26,8 +29,11 @@ BACKeys deriveBACKeys(const std::string& documentNumber, const std::string& date
                       const std::string& dateOfExpiry);
 
 // Perform BAC mutual authentication with the card.
-// Returns session keys on success (3DES, SSC = 8 bytes).
-std::optional<SessionKeys> performBAC(LibreSCRS::SmartCard::IConnection& conn, const BACKeys& keys);
+// Returns session keys on success (3DES, SSC = 8 bytes); an empty optional is
+// the card refusing (wrong MRZ), the error is the reader failing to carry an
+// exchange.
+[[nodiscard]] std::expected<std::optional<SessionKeys>, LibreSCRS::SmartCard::TransportError>
+performBAC(LibreSCRS::SmartCard::IConnection& conn, const BACKeys& keys);
 
 namespace detail {
 int computeCheckDigit(std::string_view input);

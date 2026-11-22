@@ -17,18 +17,21 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <expected>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
 namespace {
 
+using LibreSCRS::SmartCard::TransportError;
 using LibreSCRS::SmartCard::Internal::APDUCommand;
 using LibreSCRS::SmartCard::Internal::CardTransaction;
 using LibreSCRS::SmartCard::Internal::PCSCConnection;
-using LibreSCRS::SmartCard::Internal::PCSCError;
+using Kind = LibreSCRS::SmartCard::TransportError::Kind;
 namespace Ctk = LibreSCRS::SmartCard::Internal::Ctk;
 namespace Fake = LibreSCRS::SmartCard::Internal::Ctk::Fake;
 using Bytes = std::vector<std::uint8_t>;
@@ -39,26 +42,31 @@ const Bytes kReadBinary{0x00, 0xB0, 0x00, 0x00, 0x04};
 
 std::unique_ptr<PCSCConnection> connect(const std::string& reader)
 {
+    auto opened = LibreSCRS::SmartCard::Internal::openRawDiagnostic(reader);
+    return opened ? std::move(*opened) : nullptr;
+}
+
+auto tryConnect(const std::string& reader)
+{
     return LibreSCRS::SmartCard::Internal::openRawDiagnostic(reader);
+}
+
+// The error of @p r with its detail copied to @p message, or nothing when it succeeded.
+template <typename T>
+std::optional<Kind> kindOf(const std::expected<T, TransportError>& r, std::string* message = nullptr)
+{
+    if (r) {
+        return std::nullopt;
+    }
+    if (message) {
+        *message = r.error().detail;
+    }
+    return r.error().kind;
 }
 
 APDUCommand readBinaryCommand()
 {
     return LibreSCRS::SmartCard::Internal::readBinary(0x0000, 0x10);
-}
-
-// The PCSCError code of @p f, or 0 when it does not throw one.
-template <typename F>
-LONG codeOf(F&& f, std::string* message = nullptr)
-{
-    try {
-        f();
-    } catch (const PCSCError& e) {
-        if (message)
-            *message = e.what();
-        return e.code();
-    }
-    return 0;
 }
 
 class CtkConnection : public ::testing::Test
@@ -93,15 +101,18 @@ TEST_F(CtkConnection, TransactionsNeverTouchTheSession)
 {
     auto conn = connect(kReaderA);
     {
-        CardTransaction outer(*conn);
+        auto outer = CardTransaction::begin(*conn);
+        ASSERT_TRUE(outer);
         {
-            CardTransaction inner(*conn);
+            auto inner = CardTransaction::begin(*conn);
+            ASSERT_TRUE(inner);
             (void)conn->transmit(readBinaryCommand());
         }
         (void)conn->transmit(readBinaryCommand());
     }
     {
-        CardTransaction again(*conn);
+        auto again = CardTransaction::begin(*conn);
+        ASSERT_TRUE(again);
         (void)conn->transmit(readBinaryCommand());
     }
     const auto c = Fake::calls(kReaderA);
@@ -129,7 +140,8 @@ TEST_F(CtkConnection, LostSessionWithCardPresentReconnectsOnceAndRetries)
     ASSERT_EQ(c.received.size(), 3U) << "the first APDU, then the second one exactly twice";
     EXPECT_EQ(c.received[1], kReadBinary);
     EXPECT_EQ(c.received[2], kReadBinary);
-    EXPECT_EQ(response.statusWord(), 0x6988);
+    ASSERT_TRUE(response);
+    EXPECT_EQ(response->statusWord(), 0x6988);
 }
 
 TEST_F(CtkConnection, LostSessionReconnectsButDoesNotResendASecureMessagingCommand)
@@ -147,7 +159,7 @@ TEST_F(CtkConnection, LostSessionReconnectsButDoesNotResendASecureMessagingComma
     (void)conn->transmitRaw(std::span<const std::uint8_t>(kReadBinary));
     Fake::loseSession(kReaderA);
 
-    EXPECT_THROW((void)conn->transmitRaw(std::span<const std::uint8_t>(wrapped)), std::exception);
+    EXPECT_EQ(kindOf(conn->transmitRaw(std::span<const std::uint8_t>(wrapped))), Kind::CardReset);
 
     const auto c = Fake::calls(kReaderA);
     EXPECT_EQ(c.order, (std::vector<std::string>{"open", "end", "open"})) << "the connection still recovers";
@@ -161,10 +173,9 @@ TEST_F(CtkConnection, LostSessionHeldElsewhereFailsWithinTheBound)
     Fake::loseSession(kReaderA);
     Fake::slot(kReaderA).refuseOpenWith = Ctk::CtkStatus::SessionRefused;
 
-    EXPECT_EQ(codeOf([&] { (void)conn->transmitRaw(std::span<const std::uint8_t>(kReadBinary)); }),
-              static_cast<LONG>(SCARD_E_SHARING_VIOLATION));
+    EXPECT_EQ(kindOf(conn->transmitRaw(std::span<const std::uint8_t>(kReadBinary))), Kind::SessionRefused);
     EXPECT_EQ(Fake::calls(kReaderA).opens, 2) << "one reopen attempt for the call, no loop";
-    EXPECT_EQ(codeOf([&] { conn->beginTransaction(); }), static_cast<LONG>(SCARD_E_SHARING_VIOLATION));
+    EXPECT_EQ(kindOf(conn->beginTransaction()), Kind::SessionRefused);
     const auto c = Fake::calls(kReaderA);
     EXPECT_EQ(c.opens, 3) << "one more for the transaction";
     EXPECT_EQ(c.lastDeadline, std::chrono::seconds{10});
@@ -176,8 +187,7 @@ TEST_F(CtkConnection, LostSessionWithCardGoneIsRemoved)
     auto conn = connect(kReaderA);
     Fake::removeCard(kReaderA);
 
-    EXPECT_EQ(codeOf([&] { (void)conn->transmitRaw(std::span<const std::uint8_t>(kReadBinary)); }),
-              static_cast<LONG>(SCARD_W_REMOVED_CARD));
+    EXPECT_EQ(kindOf(conn->transmitRaw(std::span<const std::uint8_t>(kReadBinary))), Kind::NoCardPresent);
     EXPECT_EQ(Fake::calls(kReaderA).opens, 1);
 }
 
@@ -188,8 +198,7 @@ TEST_F(CtkConnection, SwappedCardIsRemovedNotRetried)
     Fake::swapCard(kReaderA, Fake::slot(kReaderA).atr); // another card, the same ATR
 
     const Bytes second{0x00, 0xB0, 0x00, 0x10, 0x04};
-    EXPECT_EQ(codeOf([&] { (void)conn->transmitRaw(std::span<const std::uint8_t>(second)); }),
-              static_cast<LONG>(SCARD_W_REMOVED_CARD));
+    EXPECT_EQ(kindOf(conn->transmitRaw(std::span<const std::uint8_t>(second))), Kind::NoCardPresent);
     const auto c = Fake::calls(kReaderA);
     EXPECT_EQ(c.opens, 1);
     EXPECT_EQ(std::count(c.received.begin(), c.received.end(), second), 0) << "the new card never sees the command";
@@ -210,8 +219,7 @@ TEST_F(CtkConnection, SensitiveCommandIsNeverRetriedAfterSessionLoss)
         auto conn = connect(kReaderA);
         Fake::loseSession(kReaderA);
 
-        EXPECT_EQ(codeOf([&] { (void)conn->transmitRaw(std::span<const std::uint8_t>(pin)); }),
-                  static_cast<LONG>(SCARD_W_RESET_CARD));
+        EXPECT_EQ(kindOf(conn->transmitRaw(std::span<const std::uint8_t>(pin))), Kind::CardReset);
         const auto c = Fake::calls(kReaderA);
         EXPECT_EQ(std::count(c.received.begin(), c.received.end(), pin), 1) << "sent once, never resent";
         EXPECT_EQ(c.opens, 2) << "the session is begun again for the next call";
@@ -232,15 +240,14 @@ TEST_F(CtkConnection, ReaderUnpluggedDuringHeldSessionIsRemoved)
     auto conn = connect(kReaderA);
     Fake::removeSlot(kReaderA);
 
-    EXPECT_EQ(codeOf([&] { (void)conn->transmitRaw(std::span<const std::uint8_t>(kReadBinary)); }),
-              static_cast<LONG>(SCARD_W_REMOVED_CARD));
+    EXPECT_EQ(kindOf(conn->transmitRaw(std::span<const std::uint8_t>(kReadBinary))), Kind::NoCardPresent);
     EXPECT_EQ(Fake::calls(kReaderA).opens, 1);
 }
 
 TEST_F(CtkConnection, ReconnectOnLiveSessionIsANoOp)
 {
     auto conn = connect(kReaderA);
-    conn->reconnect();
+    EXPECT_TRUE(conn->reconnect());
     const auto c = Fake::calls(kReaderA);
     EXPECT_EQ(c.opens, 1);
     EXPECT_EQ(c.exchanges, 0);
@@ -249,7 +256,7 @@ TEST_F(CtkConnection, ReconnectOnLiveSessionIsANoOp)
 TEST_F(CtkConnection, ResetIsUnsupported)
 {
     auto conn = connect(kReaderA);
-    EXPECT_EQ(codeOf([&] { conn->reconnectWithReset(); }), static_cast<LONG>(SCARD_E_UNSUPPORTED_FEATURE));
+    EXPECT_EQ(kindOf(conn->reconnectWithReset()), Kind::ReaderUnavailable);
 }
 
 TEST_F(CtkConnection, ErrorMapping)
@@ -258,20 +265,16 @@ TEST_F(CtkConnection, ErrorMapping)
     {
         const char* name;
         std::function<void()> arrange;
-        LONG code;
+        Kind kind;
         const char* says;
     };
     const Case cases[] = {
-        {"NoManager", [] { Fake::setManagerPresent(false); }, static_cast<LONG>(SCARD_E_NO_ACCESS),
-         "com.apple.security.smartcard"},
-        {"UnknownSlot", [] { Fake::removeSlot(kReaderA); }, static_cast<LONG>(SCARD_E_UNKNOWN_READER),
-         "unknown reader"},
-        {"NoCard", [] { Fake::slot(kReaderA).state = Ctk::SlotState::Empty; }, static_cast<LONG>(SCARD_E_NO_SMARTCARD),
-         "no smartcard"},
-        {"Mute", [] { Fake::slot(kReaderA).state = Ctk::SlotState::MuteCard; },
-         static_cast<LONG>(SCARD_W_UNRESPONSIVE_CARD), "mute"},
+        {"NoManager", [] { Fake::setManagerPresent(false); }, Kind::ReaderUnavailable, "com.apple.security.smartcard"},
+        {"UnknownSlot", [] { Fake::removeSlot(kReaderA); }, Kind::ReaderUnavailable, "unknown reader"},
+        {"NoCard", [] { Fake::slot(kReaderA).state = Ctk::SlotState::Empty; }, Kind::NoCardPresent, "no smartcard"},
+        {"Mute", [] { Fake::slot(kReaderA).state = Ctk::SlotState::MuteCard; }, Kind::ProtocolError, "mute"},
         {"SessionRefused", [] { Fake::slot(kReaderA).refuseOpenWith = Ctk::CtkStatus::SessionRefused; },
-         static_cast<LONG>(SCARD_E_SHARING_VIOLATION), "exclusive session refused"},
+         Kind::SessionRefused, "exclusive session refused"},
     };
     for (const auto& c : cases) {
         SCOPED_TRACE(c.name);
@@ -279,7 +282,7 @@ TEST_F(CtkConnection, ErrorMapping)
         (void)Fake::slot(kReaderA);
         c.arrange();
         std::string message;
-        EXPECT_EQ(codeOf([&] { (void)connect(kReaderA); }, &message), c.code);
+        EXPECT_EQ(kindOf(tryConnect(kReaderA), &message), c.kind);
         EXPECT_NE(message.find(c.says), std::string::npos) << message;
         // CardSession classifies an open failure from these words: only a
         // missing card reads as "no card", and none reads as a protocol error.
@@ -297,15 +300,14 @@ TEST_F(CtkConnection, ErrorMapping)
     };
     auto conn = connect(kReaderA);
     std::string message;
-    EXPECT_EQ(codeOf([&] { (void)conn->transmitRaw(std::span<const std::uint8_t>(kReadBinary)); }, &message),
-              static_cast<LONG>(SCARD_F_COMM_ERROR));
+    EXPECT_EQ(kindOf(conn->transmitRaw(std::span<const std::uint8_t>(kReadBinary)), &message), Kind::ProtocolError);
     EXPECT_NE(message.find("transmit failed"), std::string::npos) << message;
 }
 
 TEST_F(CtkConnection, RefusedSessionIsNotRetried)
 {
     Fake::slot(kReaderA).refuseOpenWith = Ctk::CtkStatus::SessionRefused;
-    EXPECT_EQ(codeOf([&] { (void)connect(kReaderA); }), static_cast<LONG>(SCARD_E_SHARING_VIOLATION));
+    EXPECT_EQ(kindOf(tryConnect(kReaderA)), Kind::SessionRefused);
     EXPECT_EQ(Fake::calls(kReaderA).opens, 1);
 }
 
@@ -320,18 +322,20 @@ TEST_F(CtkConnection, T0WrongLengthAndGetResponseUseTheSharedLoop)
     };
     auto conn = connect(kReaderA);
     auto response = conn->transmit(readBinaryCommand());
+    ASSERT_TRUE(response);
     auto c = Fake::calls(kReaderA);
     ASSERT_EQ(c.received.size(), 2U);
     EXPECT_EQ(c.received[1], (Bytes{0x00, 0xB0, 0x00, 0x00, 0x07}));
-    EXPECT_EQ(response.data, (Bytes{0x01, 0x02, 0x03}));
+    EXPECT_EQ(response->data, (Bytes{0x01, 0x02, 0x03}));
 
     // 61xx: the rest of the answer is fetched with GET RESPONSE.
     replies = {{0x61, 0x02}, {0xAA, 0xBB, 0x90, 0x00}};
     response = conn->transmit(readBinaryCommand());
+    ASSERT_TRUE(response);
     c = Fake::calls(kReaderA);
     ASSERT_EQ(c.received.size(), 4U);
     EXPECT_EQ(c.received[3], (Bytes{0x00, 0xC0, 0x00, 0x00, 0x02}));
-    EXPECT_EQ(response.data, (Bytes{0xAA, 0xBB}));
+    EXPECT_EQ(response->data, (Bytes{0xAA, 0xBB}));
 }
 
 TEST_F(CtkConnection, ProtocolComesFromTheSession)
@@ -348,13 +352,14 @@ TEST_F(CtkConnection, ProtocolComesFromTheSession)
         };
         auto conn = connect(kReaderA);
         const auto response = conn->transmit(readBinaryCommand());
+        ASSERT_TRUE(response);
         const auto c = Fake::calls(kReaderA);
         if (protocol == Ctk::CtkProtocol::T0) {
             EXPECT_EQ(c.received.size(), 2U) << "T=0: 6C is answered by a resend";
-            EXPECT_TRUE(response.isSuccess());
+            EXPECT_TRUE(response->isSuccess());
         } else {
             EXPECT_EQ(c.received.size(), 1U) << "T=1: 6C reaches the caller";
-            EXPECT_EQ(response.statusWord(), 0x6C07);
+            EXPECT_EQ(response->statusWord(), 0x6C07);
         }
     }
 }
@@ -365,27 +370,30 @@ TEST_F(CtkConnection, DetachedConnectionMatchesThePcscBody)
     // SCARD_E_INVALID_HANDLE with these messages; transactions do nothing.
     PCSCConnection conn(PCSCConnection::DetachedTag{}, "detached");
     std::string message;
-    EXPECT_EQ(codeOf([&] { (void)conn.transmitRaw(std::span<const std::uint8_t>(kReadBinary)); }, &message),
-              static_cast<LONG>(SCARD_E_INVALID_HANDLE));
+    EXPECT_EQ(kindOf(conn.transmitRaw(std::span<const std::uint8_t>(kReadBinary)), &message), Kind::ReaderUnavailable);
     EXPECT_EQ(message, "SCardTransmit failed");
-    EXPECT_EQ(codeOf([&] { (void)conn.getATR(); }, &message), static_cast<LONG>(SCARD_E_INVALID_HANDLE));
+    EXPECT_EQ(kindOf(conn.getATR(), &message), Kind::ReaderUnavailable);
     EXPECT_EQ(message, "SCardStatus failed");
-    EXPECT_EQ(codeOf([&] { conn.reconnect(); }, &message), static_cast<LONG>(SCARD_E_INVALID_HANDLE));
+    EXPECT_EQ(kindOf(conn.reconnect(), &message), Kind::ReaderUnavailable);
     EXPECT_EQ(message, "SCardReconnect failed");
-    EXPECT_EQ(codeOf([&] { conn.reconnectWithReset(); }, &message), static_cast<LONG>(SCARD_E_INVALID_HANDLE));
+    EXPECT_EQ(kindOf(conn.reconnectWithReset(), &message), Kind::ReaderUnavailable);
     EXPECT_EQ(message, "SCardReconnect (reset) failed");
-    EXPECT_EQ(codeOf([&] { conn.beginTransaction(); }), 0);
-    EXPECT_EQ(codeOf([&] { conn.endTransaction(); }), 0);
+    EXPECT_FALSE(kindOf(conn.beginTransaction()));
+    conn.endTransaction();
 }
 
 TEST_F(CtkConnection, ListReadersIsTheSlotNames)
 {
     (void)Fake::slot(kReaderB);
-    auto names = PCSCConnection::listReaders();
+    auto listed = PCSCConnection::listReaders();
+    ASSERT_TRUE(listed);
+    auto names = *listed;
     std::sort(names.begin(), names.end());
     EXPECT_EQ(names, (std::vector<std::string>{kReaderA, kReaderB}));
     Fake::setManagerPresent(false);
-    EXPECT_TRUE(PCSCConnection::listReaders().empty());
+    const auto none = PCSCConnection::listReaders();
+    ASSERT_TRUE(none);
+    EXPECT_TRUE(none->empty());
 }
 
 TEST_F(CtkConnection, ReaderBIsNotDelayedByReaderA)

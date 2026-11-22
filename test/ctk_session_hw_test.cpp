@@ -35,6 +35,7 @@
 //
 // Measurements go to stderr as single lines starting with "CTKHW ".
 
+#include <smartcard/or_throw.h>
 #include "ctk_hw_cards.h"
 #include "ctk_hw_probe.h"
 #include "pin_guard.h"
@@ -97,10 +98,10 @@ namespace CtkHw = LibreSCRS::Tests::CtkHw;
 using LibreSCRS::SmartCard::ActiveChannelHolder;
 using LibreSCRS::SmartCard::AppletAid;
 using LibreSCRS::SmartCard::CardSession;
+using LibreSCRS::SmartCard::TransportError;
 using LibreSCRS::SmartCard::Internal::APDUCommand;
 using LibreSCRS::SmartCard::Internal::APDUResponse;
 using LibreSCRS::SmartCard::Internal::PCSCConnection;
-using LibreSCRS::SmartCard::Internal::PCSCError;
 using LibreSCRS::Tests::E2E::markPinFailedAndAbort;
 using Clock = std::chrono::steady_clock;
 using CtkHw::atrHasPrefix;
@@ -135,11 +136,31 @@ std::string hex4(std::uint16_t value)
     return hex(bytes);
 }
 
-std::string pcscCode(long code)
+std::string kindName(TransportError::Kind kind)
 {
-    char buffer[16];
-    std::snprintf(buffer, sizeof buffer, "0x%08lX", static_cast<unsigned long>(code) & 0xFFFFFFFFUL);
-    return buffer;
+    switch (kind) {
+    case TransportError::Kind::ReaderUnavailable:
+        return "ReaderUnavailable";
+    case TransportError::Kind::NoCardPresent:
+        return "NoCardPresent";
+    case TransportError::Kind::CardReset:
+        return "CardReset";
+    case TransportError::Kind::ProtocolError:
+        return "ProtocolError";
+    case TransportError::Kind::SessionRefused:
+        return "SessionRefused";
+    case TransportError::Kind::ChannelUnusable:
+        return "ChannelUnusable";
+    case TransportError::Kind::IntegrityFailure:
+        return "IntegrityFailure";
+    case TransportError::Kind::SecureChannelActive:
+        return "SecureChannelActive";
+    case TransportError::Kind::Cancelled:
+        return "Cancelled";
+    case TransportError::Kind::InvalidCommand:
+        return "InvalidCommand";
+    }
+    return "?";
 }
 
 // One measurement line: "CTKHW <case> key=value ...".
@@ -287,13 +308,13 @@ FileRead readTlvFile(LibreSCRS::SecureChannel::ISecureChannel& channel, std::uin
 {
     FileRead result;
     const LibreSCRS::CancelToken token;
-    const auto select = channel.transmit(selectFile(fid), token);
+    const auto select = LibreSCRS::SmartCard::Internal::orThrow(channel.transmit(selectFile(fid), token));
     result.steps.push_back("select:" + hex4(select.statusWord()) + ":0");
     if (select.statusWord() != 0x9000) {
         result.failure = "select " + hex4(fid) + " sw=" + hex4(select.statusWord());
         return result;
     }
-    const auto head = channel.transmit(readBinary(0, 8), token);
+    const auto head = LibreSCRS::SmartCard::Internal::orThrow(channel.transmit(readBinary(0, 8), token));
     result.steps.push_back("head:" + hex4(head.statusWord()) + ":" + std::to_string(head.data.size()));
     if ((head.statusWord() != 0x9000 && head.sw1 != 0x62) || head.data.size() < 2) {
         result.failure = "header read sw=" + hex4(head.statusWord());
@@ -327,7 +348,8 @@ FileRead readTlvFile(LibreSCRS::SecureChannel::ISecureChannel& channel, std::uin
     while (result.content.size() < total) {
         const auto remaining = total - result.content.size();
         const auto le = static_cast<std::uint16_t>(std::min<std::size_t>(remaining, chunk));
-        const auto reply = channel.transmit(readBinary(static_cast<std::uint16_t>(result.content.size()), le), token);
+        const auto reply = LibreSCRS::SmartCard::Internal::orThrow(
+            channel.transmit(readBinary(static_cast<std::uint16_t>(result.content.size()), le), token));
         result.steps.push_back("read@" + std::to_string(result.content.size()) + "/le=" + std::to_string(le) + ":" +
                                hex4(reply.statusWord()) + ":" + std::to_string(reply.data.size()));
         if ((reply.statusWord() != 0x9000 && reply.sw1 != 0x62) || reply.data.empty()) {
@@ -459,14 +481,15 @@ std::expected<PluginSession, std::string> openWithPlugin(const std::string& slot
     return result;
 }
 
-// One command through the session's transmit; a reader failure reads as 6F00.
+// One command through the session's transmit. A reader failure is not a card
+// answer: it fails the running test (gtest reports the exception) instead of
+// being read as a status word.
 APDUResponse viaSession(CardSession& session, const APDUCommand& cmd)
 {
-    try {
-        return LibreSCRS::SmartCard::SessionConnection(session).transmit(cmd);
-    } catch (...) {
-        return APDUResponse{{}, 0x6F, 0x00};
-    }
+    auto answered = LibreSCRS::SmartCard::SessionConnection(session).transmit(cmd);
+    if (!answered)
+        throw std::runtime_error("transmit failed: " + answered.error().detail);
+    return std::move(*answered);
 }
 
 // The retry counter of the PIN at @p reference, from VERIFY without data
@@ -536,11 +559,13 @@ struct Outcome
 {
     bool replied = false;
     std::uint16_t sw = 0;
-    long code = 0;
+    TransportError::Kind kind = TransportError::Kind::ReaderUnavailable;
+    std::string detail;
     double ms = 0;
     std::string text() const
     {
-        return replied ? "sw=" + hex4(sw) + " ms=" + fixed(ms) : "pcsc=" + pcscCode(code) + " ms=" + fixed(ms);
+        return replied ? "sw=" + hex4(sw) + " ms=" + fixed(ms)
+                       : "error=" + kindName(kind) + " (" + detail + ") ms=" + fixed(ms);
     }
 };
 
@@ -548,11 +573,13 @@ Outcome attempt(PCSCConnection& conn, const APDUCommand& cmd)
 {
     Outcome outcome;
     const auto start = Clock::now();
-    try {
-        outcome.sw = conn.transmit(cmd).statusWord();
+    const auto answered = conn.transmit(cmd);
+    if (answered) {
+        outcome.sw = answered->statusWord();
         outcome.replied = true;
-    } catch (const PCSCError& e) {
-        outcome.code = e.code();
+    } else {
+        outcome.kind = answered.error().kind;
+        outcome.detail = answered.error().detail;
     }
     outcome.ms = msSince(start);
     return outcome;
@@ -639,7 +666,9 @@ protected:
         const auto slot = slotFor(kPlainCard);
         if (!slot)
             GTEST_SKIP() << "no contact test card (by ATR prefix) in any reader";
-        auto conn = LibreSCRS::SmartCard::Internal::openRawDiagnostic(*slot);
+        auto opened = LibreSCRS::SmartCard::Internal::openRawDiagnostic(*slot);
+        ASSERT_TRUE(opened) << opened.error().detail;
+        auto conn = std::move(*opened);
         const auto before = attempt(*conn, selectMf());
         record(std::string(caseName) + " before " + before.text());
         ASSERT_TRUE(before.replied);
@@ -652,14 +681,11 @@ protected:
         EXPECT_LE(first.ms, boundMs) << "the first APDU after the disruption took longer than the bound";
         if (!first.replied) {
             const auto start = Clock::now();
-            long code = 0;
-            try {
-                conn->reconnect();
-            } catch (const PCSCError& e) {
-                code = e.code();
-            }
-            record(std::string(caseName) + " reconnect pcsc=" + pcscCode(code) + " ms=" + fixed(msSince(start)));
-            EXPECT_EQ(code, 0) << "reconnect did not give a new session";
+            const auto reconnected = conn->reconnect();
+            record(std::string(caseName) + " reconnect " +
+                   (reconnected ? std::string("ok") : "error=" + kindName(reconnected.error().kind)) +
+                   " ms=" + fixed(msSince(start)));
+            EXPECT_TRUE(reconnected) << "reconnect did not give a new session";
         }
         const auto after = attempt(*conn, selectMf());
         record(std::string(caseName) + " operation-after " + after.text());
@@ -732,7 +758,9 @@ TEST_F(CtkSessionHardware, RemovalMidSequenceIsRemoved)
     const auto slot = slotFor(kPlainCard);
     if (!slot)
         GTEST_SKIP() << "no contact test card (by ATR prefix) in any reader";
-    auto conn = LibreSCRS::SmartCard::Internal::openRawDiagnostic(*slot);
+    auto opened = LibreSCRS::SmartCard::Internal::openRawDiagnostic(*slot);
+    ASSERT_TRUE(opened) << opened.error().detail;
+    auto conn = std::move(*opened);
     const long seconds = envLong("LIBRESCRS_HW_CTK_WAIT_SECONDS", 600);
     std::fprintf(stderr, "\n>>> Remove the card from \"%s\" now (APDUs every 100 ms for up to %ld s).\n", slot->c_str(),
                  seconds);
@@ -754,7 +782,7 @@ TEST_F(CtkSessionHardware, RemovalMidSequenceIsRemoved)
         GTEST_SKIP() << "the card was not removed within the wait";
     record("removal apdus-before=" + std::to_string(sent - 1) + " " + failed->text() +
            " at_s=" + fixed(msSince(start) / 1000.0));
-    EXPECT_EQ(failed->code, SCARD_W_REMOVED_CARD);
+    EXPECT_EQ(failed->kind, TransportError::Kind::NoCardPresent);
 
     const auto closeStart = Clock::now();
     conn.reset(); // ends the session
@@ -1054,8 +1082,12 @@ TEST_F(CtkSessionHardware, ReaderBIsNotDelayedByReaderAOnHardware)
     if (!slotA || !slotB)
         GTEST_SKIP() << "needs the contact test LK and a second test card in another reader";
     ASSERT_NE(*slotA, *slotB);
-    auto connA = LibreSCRS::SmartCard::Internal::openRawDiagnostic(*slotA);
-    auto connB = LibreSCRS::SmartCard::Internal::openRawDiagnostic(*slotB);
+    auto openedA = LibreSCRS::SmartCard::Internal::openRawDiagnostic(*slotA);
+    auto openedB = LibreSCRS::SmartCard::Internal::openRawDiagnostic(*slotB);
+    ASSERT_TRUE(openedA) << openedA.error().detail;
+    ASSERT_TRUE(openedB) << openedB.error().detail;
+    auto connA = std::move(*openedA);
+    auto connB = std::move(*openedB);
     const long count = std::max(10L, envLong("LIBRESCRS_HW_CTK_B_COUNT", 200));
     const auto aLe = static_cast<std::uint16_t>(envLong("LIBRESCRS_HW_CTK_A_LE", 0));
     const long dg = envLong("LIBRESCRS_HW_CTK_DG", 2);

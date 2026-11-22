@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <expected>
 #include <optional>
 #include <span>
 #include <vector>
@@ -42,7 +43,7 @@ class ImageConnection final : public LibreSCRS::SmartCard::IConnection
 public:
     explicit ImageConnection(std::span<const std::uint8_t> image) : image(image) {}
 
-    SC::APDUResponse transmit(const SC::APDUCommand& cmd) override
+    std::expected<SC::APDUResponse, LibreSCRS::SmartCard::TransportError> transmit(const SC::APDUCommand& cmd) override
     {
         SC::APDUResponse resp;
         resp.sw1 = 0x90;
@@ -59,7 +60,8 @@ public:
         return resp;
     }
 
-    SC::APDUResponse transmitRaw(std::span<const std::uint8_t> cmdBytes) override
+    std::expected<SC::APDUResponse, LibreSCRS::SmartCard::TransportError>
+    transmitRaw(std::span<const std::uint8_t> cmdBytes) override
     {
         SC::APDUCommand cmd{};
         if (cmdBytes.size() >= 4) {

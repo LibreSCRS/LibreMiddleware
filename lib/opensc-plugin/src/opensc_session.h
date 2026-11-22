@@ -504,8 +504,10 @@ template <typename Decipher>
 /// Le). Returns true iff EF.DIR was readable AND advertises the
 /// AppletSuiteGen2 AID prefix @c F3 81 00 00 02. An unreadable EF.DIR
 /// declines conservatively — the generic pkcs15 plugin stays the fallback.
-[[nodiscard]] bool efDirAdvertisesAppletSuiteGen2(const std::function<LibreSCRS::SmartCard::Internal::APDUResponse(
-                                                      const LibreSCRS::SmartCard::Internal::APDUCommand&)>& transmit);
+[[nodiscard]] bool efDirAdvertisesAppletSuiteGen2(
+    const std::function<
+        std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError>(
+            const LibreSCRS::SmartCard::Internal::APDUCommand&)>& transmit);
 
 /// What @ref runUnderChannel observed. The operation combines this with its
 /// own completion flag to produce the typed per-operation outcome; the

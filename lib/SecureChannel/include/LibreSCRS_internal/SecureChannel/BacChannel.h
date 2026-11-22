@@ -48,7 +48,7 @@ public:
     [[nodiscard]] const LibreSCRS::SmartCard::AppletAid& currentApplet() const noexcept override;
     [[nodiscard]] ChannelState state() const noexcept override;
 
-    [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
+    [[nodiscard]] std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError>
     transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token) override;
 
     void close() override;

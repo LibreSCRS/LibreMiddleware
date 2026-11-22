@@ -18,7 +18,7 @@
 /// caller-supplied @c onTransmitCallback hook before returning SW=9000 so
 /// a test can simulate a concurrent session mutation (e.g. another thread
 /// resetting the active channel) mid-dispatch. A test that needs scripted
-/// responses (specific SW pairs, channel sentinels, thrown exceptions)
+/// responses (specific SW pairs, transport errors, thrown exceptions)
 /// sets @c transmitHandler; when set, its return value replaces the
 /// default SW=9000 reply. @c setState mutates the reported channel state
 /// mid-test (e.g. Open -> Failed after an SM-fatal reply). @c close
@@ -29,12 +29,15 @@
 
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
+#include <LibreSCRS/SmartCard/TransportError.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
 
 #include "apdu.h"
 
+#include <expected>
 #include <functional>
+#include <optional>
 #include <utility>
 
 namespace LibreSCRS::SecureChannel::TestSupport {
@@ -58,14 +61,22 @@ public:
         return channelState;
     }
 
-    [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
+    [[nodiscard]] std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError>
     transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token) override
     {
+        // Like a real channel: one that is not open sends nothing.
+        if (channelState != ChannelState::Open) {
+            return std::unexpected(LibreSCRS::SmartCard::TransportError{
+                LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable, "fake channel is not open"});
+        }
         lastCommand = cmd;
         lastReceivedToken = std::move(token);
         ++transmitCount;
         if (onTransmitCallback) {
             onTransmitCallback();
+        }
+        if (transmitFailure) {
+            return std::unexpected(*transmitFailure);
         }
         if (transmitHandler) {
             return transmitHandler(cmd);
@@ -111,7 +122,7 @@ public:
     }
 
     /// Mid-test state mutation (e.g. Open -> Failed once the scripted
-    /// reply is an SM-fatal sentinel).
+    /// reply is an SM-fatal error).
     void setState(ChannelState state) noexcept
     {
         channelState = state;
@@ -119,9 +130,12 @@ public:
 
     std::function<void()> onTransmitCallback;
 
+    /// When set, @c transmit fails with this error (a reader failure under
+    /// the channel) instead of answering.
+    std::optional<LibreSCRS::SmartCard::TransportError> transmitFailure;
+
     /// Scripted reply: when set, @c transmit returns this instead of the
-    /// default SW=9000. May throw to model a connection-level failure
-    /// (e.g. card removal) propagating through the channel.
+    /// default SW=9000.
     std::function<LibreSCRS::SmartCard::Internal::APDUResponse(const LibreSCRS::SmartCard::Internal::APDUCommand&)>
         transmitHandler;
 

@@ -6,6 +6,7 @@
 #include "apdu.h"
 #include <smartcard/card_connection.h>
 #include <smartcard/chunked_read.h>
+#include <smartcard/or_throw.h>
 #include <stdexcept>
 
 namespace eidcard {
@@ -19,7 +20,8 @@ std::vector<uint8_t> readApolloFile(LibreSCRS::SmartCard::CardConnection& conn, 
 {
     // Apollo cards: SELECT by file ID (P1=0x00). Apollo may return
     // 0x61XX (more data available) or 0x9000; both indicate SELECT OK.
-    auto selectResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(fileId1, fileId2));
+    auto selectResp = LibreSCRS::SmartCard::Internal::orThrow(
+        conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(fileId1, fileId2)));
     if (selectResp.sw1 != 0x90 && selectResp.sw1 != 0x61) {
         throw std::runtime_error("Apollo: SELECT file failed, SW=" + std::to_string(selectResp.statusWord()));
     }

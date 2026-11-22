@@ -335,19 +335,25 @@ public:
             // to a card it cannot actually read certificates from).
             if (session.hasLiveSecureChannel()) {
                 std::vector<std::uint8_t> probeAid(::pkcs15::kPkcs15Aid.begin(), ::pkcs15::kPkcs15Aid.end());
-                const auto probeResp = LibreSCRS::SmartCard::SessionConnection(session).probe(
+                // A failed exchange is "not this card", as a refusing answer is.
+                const auto probeResp = LibreSCRS::SmartCard::SessionConnection(session).transmit(
                     LibreSCRS::SmartCard::Internal::selectByAID(probeAid, /*p2=*/0x0C));
-                if (probeResp.isSuccess()) {
+                if (probeResp && probeResp->isSuccess()) {
                     std::lock_guard lock(stateMutex);
                     sessions[mapKey].requiresPace = true;
                     LibreSCRS::Internal::probeTrace("PROBE-PKCS15-CANHANDLE result=needsPace via=liveSm-wrapped-probe");
                     return true;
                 }
-                char swBuf[12];
-                std::snprintf(swBuf, sizeof(swBuf), "0x%04X", probeResp.statusWord());
-                LibreSCRS::Internal::probeTrace(std::string{"PROBE-PKCS15-CANHANDLE result=false "
-                                                            "via=liveSm-wrapped-probe SW="} +
-                                                swBuf);
+                if (probeResp) {
+                    char swBuf[12];
+                    std::snprintf(swBuf, sizeof(swBuf), "0x%04X", probeResp->statusWord());
+                    LibreSCRS::Internal::probeTrace(std::string{"PROBE-PKCS15-CANHANDLE result=false "
+                                                                "via=liveSm-wrapped-probe SW="} +
+                                                    swBuf);
+                } else {
+                    LibreSCRS::Internal::probeTrace("PROBE-PKCS15-CANHANDLE result=false "
+                                                    "via=liveSm-wrapped-probe exchange failed");
+                }
                 return false;
             }
             LibreSCRS::SmartCard::SessionConnection conn(session);

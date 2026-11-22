@@ -16,7 +16,10 @@
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
+#include <LibreSCRS/SmartCard/TransportError.h>
 #include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
+
+#include <expected>
 
 namespace LibreSCRS::SmartCard::Internal {
 struct APDUCommand;
@@ -67,23 +70,28 @@ public:
     [[nodiscard]] virtual ChannelState state() const noexcept = 0;
 
     /// @brief Send a command APDU through this channel, returning the
-    ///        unwrapped response.
+    ///        unwrapped response or why the exchange could not complete.
     ///
-    /// Implementations may mark the channel @ref ChannelState::Failed on
-    /// SW 6987/6988 or response MAC verification failure, depending on
-    /// the underlying protocol. Sentinel SW values are used to communicate
-    /// channel-level conditions: 0x6F00 (closed), 0x6F01 (cancelled),
-    /// 0x6F02 (failed).
+    /// An answer of the card is the value, whatever its status word,
+    /// including 6987/6988 (the card ended the secure messaging; the channel
+    /// is @ref ChannelState::Failed afterwards). Otherwise:
+    /// - the channel is not @ref ChannelState::Open: @c ChannelUnusable,
+    ///   nothing sent;
+    /// - the token fired before the send: @c Cancelled, nothing sent, the
+    ///   state unchanged;
+    /// - the reader failed mid-exchange: that error, and a secure-messaging
+    ///   channel is Failed (its send sequence counter can no longer be taken
+    ///   as in step with the card's);
+    /// - the response MAC does not verify: @c IntegrityFailure, channel Failed;
+    /// - a local secure-messaging fault (wrap too short, crypto helper
+    ///   threw): @c ChannelUnusable, channel Failed.
     ///
-    /// @throws std::bad_alloc on out-of-memory while wrapping the APDU or
-    ///         allocating SM scratch buffers. All other failure modes are
-    ///         signalled via the returned @c APDUResponse SW bytes or via
-    ///         a transition to @ref ChannelState::Failed (followed by the
-    ///         sentinel 0x6F02 on the next call). The function is
-    ///         deliberately NOT @c noexcept: a top-level catch-and-degrade
-    ///         shim would hide allocator pressure from callers that can
-    ///         meaningfully react to it.
-    [[nodiscard]] virtual LibreSCRS::SmartCard::Internal::APDUResponse
+    /// @throws std::bad_alloc on out-of-memory. Nothing else is thrown. The
+    ///         function is deliberately NOT @c noexcept: a top-level
+    ///         catch-and-degrade shim would hide allocator pressure from
+    ///         callers that can meaningfully react to it.
+    [[nodiscard]] virtual std::expected<LibreSCRS::SmartCard::Internal::APDUResponse,
+                                        LibreSCRS::SmartCard::TransportError>
     transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token) = 0;
 
     /// @brief Explicit teardown. Zeroises session keys (where applicable),

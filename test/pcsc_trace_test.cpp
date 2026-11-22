@@ -93,7 +93,8 @@ TEST_F(PcscTraceTest, OffByDefaultEmitsNothing)
 
     const auto response = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0x0000, 0x04));
 
-    EXPECT_TRUE(response.isSuccess());
+    ASSERT_TRUE(response);
+    EXPECT_TRUE(response->isSuccess());
     EXPECT_TRUE(lines.empty()) << "first line: " << (lines.empty() ? "" : lines.front().text);
 }
 
@@ -104,7 +105,8 @@ TEST_F(PcscTraceTest, ResponseIsTracedAsLengthAndStatusWordOnly)
 
     const auto response = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0x0000, 0x04));
 
-    ASSERT_TRUE(response.isSuccess());
+    ASSERT_TRUE(response);
+    ASSERT_TRUE(response->isSuccess());
     ASSERT_FALSE(lines.empty());
     for (const auto& l : lines)
         EXPECT_EQ(l.level, LibreSCRS::log::Level::Trace) << l.text;

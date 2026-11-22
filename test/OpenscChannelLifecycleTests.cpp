@@ -616,7 +616,7 @@ TEST(OpenscOperations, EmptyPinCredentialKeepsTheSessionClaim)
 // That acquisition is the FIRST PC/SC touch of the operation and it sits
 // OUTSIDE the try that contains fn, so a card removed, reset or claimed
 // exclusively by another process makes SCardBeginTransaction fail and
-// CardTransaction's constructor throw PCSCError. That throw would end the
+// CardTransaction::begin return the error. Treated as fatal, it would end the
 // operation before it ran. The bridge's own sc_lock has always caught the
 // identical failure and returned SC_ERROR_READER, so losing the outer
 // transaction must degrade to exactly that per-call behaviour -- never to an
@@ -751,9 +751,9 @@ TEST(OpenscChannelRun, ChannelDeathIsJudgedByStateAndTriggersReset)
     EXPECT_NE(f.s->context.get(), nullptr);
 }
 
-// The channel's own closed/failed sentinel fails the transmit, and the line
-// saying so reaches the host's log sink rather than this process's stderr.
-TEST(OpenscChannelRun, ChannelSentinelIsReportedThroughTheLogSink)
+// A transport error fails the transmit, and the line saying so reaches the
+// host's log sink rather than this process's stderr.
+TEST(OpenscChannelRun, ATransportErrorIsReportedThroughTheLogSink)
 {
     std::vector<std::pair<LibreSCRS::log::Level, std::string>> lines;
     struct SinkReset
@@ -774,10 +774,8 @@ TEST(OpenscChannelRun, ChannelSentinelIsReportedThroughTheLogSink)
     (void)LibreSCRS::OpenSc::runWithChannelPtr(
         *f.s, &channel, CancelToken{},
         [&](OpenSCSession& session) {
-            channel.transmitHandler = [&](const APDUCommand&) {
-                channel.setState(ChannelState::Failed);
-                return sw(0x6F, 0x02);
-            };
+            channel.transmitFailure = LibreSCRS::SmartCard::TransportError{
+                LibreSCRS::SmartCard::TransportError::Kind::IntegrityFailure, "mac did not verify"};
             sc_apdu_t a{};
             a.cse = SC_APDU_CASE_1;
             a.cla = 0x00;
@@ -790,7 +788,8 @@ TEST(OpenscChannelRun, ChannelSentinelIsReportedThroughTheLogSink)
 
     EXPECT_EQ(rv, SC_ERROR_TRANSMIT_FAILED);
     const bool reported = std::any_of(lines.begin(), lines.end(), [](const auto& entry) {
-        return entry.first == LibreSCRS::log::Level::Warn && entry.second.find("SW=6F02") != std::string::npos;
+        return entry.first == LibreSCRS::log::Level::Warn &&
+               entry.second.find("mac did not verify") != std::string::npos;
     });
     EXPECT_TRUE(reported) << lines.size() << " line(s) captured";
 }
@@ -846,14 +845,14 @@ TEST(OpenscChannelRun, CancelDuringBindResetsCardStateAndChannelStaysOpen)
     FakeChannel channel{pkcs15Aid(), ChannelState::Open, /*carriesSm=*/true};
     DeferredSessionFixture f;
 
-    // Cancel fires during the deferred bind: the tunnel replies with the
-    // 6F01 cancel sentinel (channel stays Open), the bind fails, and the
-    // reset MUST run — otherwise a second sc_card leaks on the same bridge.
+    // Cancel fires during the deferred bind: the first command cancels the
+    // run and the channel answers with a Cancelled error, which libopensc
+    // sees as a failed transmit. The bind fails, and the reset MUST run --
+    // otherwise a second sc_card leaks on the same bridge.
     CancelSource src;
-    channel.transmitHandler = [&src](const APDUCommand&) {
-        src.requestCancel();
-        return sw(0x6F, 0x01);
-    };
+    channel.onTransmitCallback = [&src] { src.requestCancel(); };
+    channel.transmitFailure = LibreSCRS::SmartCard::TransportError{
+        LibreSCRS::SmartCard::TransportError::Kind::Cancelled, "cancelled before the command was sent"};
 
     bool ran = false;
     const ChannelRunReport report = LibreSCRS::OpenSc::runWithChannelPtr(
@@ -1003,6 +1002,11 @@ TEST(OpenscOperations, EcdsaInputOfAWrongLengthIsRefusedBeforeAnyChannelWork)
     // provider; a request refused before that never reaches it.
     live.session->clearActiveChannel();
     live.channel = nullptr; // destroyed with the tunnel
+    // The card is there but answers the capability read with a soft failure,
+    // so activation goes on to prompt (a reader that failed would not).
+    LibreSCRS::SmartCard::Internal::connectionOf(*live.session).setTransmitFilter([](const APDUCommand&) {
+        return sw(0x69, 0x82);
+    });
     int providerCalls = 0;
     live.session->setCredentialProvider([&providerCalls](const LibreSCRS::Auth::AuthRequirement&) {
         ++providerCalls;

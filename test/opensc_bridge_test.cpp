@@ -23,7 +23,7 @@ using LibreSCRS::SmartCard::Internal::PCSCConnection;
 // The reader ops are wired into reader.ops by initBridgeReader; we drive them
 // directly. A DetachedTag connection performs no PC/SC I/O: beginTransaction/
 // endTransaction are no-ops, isTransactionHeld reflects CardTransaction
-// ownership, and transmitRaw raises a PCSCError — enough to prove the bridge's
+// ownership, and transmitRaw returns an error — enough to prove the bridge's
 // lock-nesting decision and exception-safety without hardware. The actual wire
 // round-trip (sc_apdu_get_octets/set_resp <-> conn.transmitRaw) is exercised by
 // the HW integration test (opensc_fallback_integration_test.cpp).
@@ -66,7 +66,8 @@ TEST(OpenScBridgeLock, DefersToHolderTransaction)
     const std::vector<uint8_t> atr{0x3B, 0x00};
     initBridgeReader(ctx, bridge, atr);
 
-    CardTransaction holderTxn(conn); // the agent's ActiveChannelHolder analogue
+    auto holderTxn = CardTransaction::begin(conn); // the agent's ActiveChannelHolder analogue
+    ASSERT_TRUE(holderTxn);
     EXPECT_TRUE(conn.isTransactionHeld());
 
     ASSERT_EQ(bridge.reader.ops->lock(&bridge.reader), SC_SUCCESS);
@@ -80,10 +81,10 @@ TEST(OpenScBridgeLock, DefersToHolderTransaction)
 TEST(OpenScBridgeTransmit, ConvertsTransmitFailureToScErrorWithoutThrowing)
 {
     // A DetachedTag connection has no card handle: PCSCConnection::transmitRaw
-    // raises a PCSCError (SCardTransmit on a null handle). The bridge transmit
-    // op MUST catch it and return an SC error code — a C++ exception crossing
-    // the libopensc C frames would be undefined behaviour. This is the
-    // exception-safety contract; the wire-level round trip is covered by the
+    // returns an error (SCardTransmit on a null handle). The bridge transmit
+    // op MUST turn it into an SC error code and never throw — a C++ exception
+    // crossing the libopensc C frames would be undefined behaviour. This is
+    // the exception-safety contract; the wire-level round trip is covered by the
     // HW test.
     PCSCConnection conn(PCSCConnection::DetachedTag{}, "FakeReader2");
     OpenScBridge bridge;
@@ -119,8 +120,7 @@ TEST(OpenScBridgeTransmit, ConvertsTransmitFailureToScErrorWithoutThrowing)
 // instead of the raw connection. The FakeChannel captures the mapped
 // APDUCommand and the forwarded CancelToken, and scripts replies via
 // transmitHandler. SW bytes pass through UNCHANGED; fatality is judged by
-// channel STATE (sentinel 6F00/6F02 with an empty body while the channel is
-// no longer Open), never by SW pattern.
+// a returned TransportError, never by SW pattern.
 
 class OpenScBridgeTunnel : public ::testing::Test
 {
@@ -314,10 +314,9 @@ TEST_F(OpenScBridgeTunnel, PassesRealCard6F00ThroughWhileChannelOpen)
     EXPECT_EQ(a.sw2, 0x00u);
 }
 
-TEST_F(OpenScBridgeTunnel, CancelSentinel6F01IsNotHandledHere)
+// A card answer 6F01 is the card's own: passed through like any other.
+TEST_F(OpenScBridgeTunnel, ACardAnswer6F01IsPassedThrough)
 {
-    // 6F01 (cancel) leaves the channel Open; cancellation is detected via
-    // the operation token by the caller, never by the bridge.
     channel.transmitHandler = [](const auto&) {
         APDUResponse r;
         r.sw1 = 0x6F;
@@ -337,44 +336,40 @@ TEST_F(OpenScBridgeTunnel, CancelSentinel6F01IsNotHandledHere)
     EXPECT_EQ(a.sw2, 0x01u);
 }
 
-TEST_F(OpenScBridgeTunnel, FailsOnFailedSentinelWhenChannelNotOpen)
+// Every transport error, whatever its kind, is a failed transmit; the bridge
+// reads no channel state and leaves cancellation to the caller's token.
+TEST_F(OpenScBridgeTunnel, EveryTransportErrorIsAFailedTransmit)
 {
-    channel.setState(ChannelState::Failed);
-    channel.transmitHandler = [](const auto&) {
-        APDUResponse r;
-        r.sw1 = 0x6F;
-        r.sw2 = 0x02;
-        return r;
-    };
+    using Kind = LibreSCRS::SmartCard::TransportError::Kind;
+    for (const auto kind :
+         {Kind::Cancelled, Kind::IntegrityFailure, Kind::ChannelUnusable, Kind::CardReset, Kind::ReaderUnavailable}) {
+        channel.transmitFailure = LibreSCRS::SmartCard::TransportError{kind, "scripted"};
 
-    sc_apdu_t a{};
-    a.cse = SC_APDU_CASE_1;
-    a.cla = 0x00;
-    a.ins = 0xA4;
-    a.p1 = 0x04;
-    a.p2 = 0x0C;
+        sc_apdu_t a{};
+        a.cse = SC_APDU_CASE_1;
+        a.cla = 0x00;
+        a.ins = 0xA4;
+        a.p1 = 0x04;
+        a.p2 = 0x0C;
 
-    EXPECT_EQ(transmit(&a), SC_ERROR_TRANSMIT_FAILED);
+        EXPECT_EQ(transmit(&a), SC_ERROR_TRANSMIT_FAILED) << static_cast<int>(kind);
+    }
 }
 
-TEST_F(OpenScBridgeTunnel, FailsOnClosedSentinelWhenChannelNotOpen)
+TEST_F(OpenScBridgeTunnel, AChannelThatIsNotOpenIsAFailedTransmit)
 {
-    channel.setState(ChannelState::Closed);
-    channel.transmitHandler = [](const auto&) {
-        APDUResponse r;
-        r.sw1 = 0x6F;
-        r.sw2 = 0x00;
-        return r;
-    };
+    for (const auto state : {ChannelState::Failed, ChannelState::Closed}) {
+        channel.setState(state);
 
-    sc_apdu_t a{};
-    a.cse = SC_APDU_CASE_1;
-    a.cla = 0x00;
-    a.ins = 0xA4;
-    a.p1 = 0x04;
-    a.p2 = 0x0C;
+        sc_apdu_t a{};
+        a.cse = SC_APDU_CASE_1;
+        a.cla = 0x00;
+        a.ins = 0xA4;
+        a.p1 = 0x04;
+        a.p2 = 0x0C;
 
-    EXPECT_EQ(transmit(&a), SC_ERROR_TRANSMIT_FAILED);
+        EXPECT_EQ(transmit(&a), SC_ERROR_TRANSMIT_FAILED);
+    }
 }
 
 TEST_F(OpenScBridgeTunnel, ClampsResponseBodyToResplen)
@@ -432,8 +427,8 @@ TEST_F(OpenScBridgeTunnel, HandlesNullResponseBuffer)
 
 TEST_F(OpenScBridgeTunnel, ExceptionFromChannelBecomesTransmitFailed)
 {
-    // Card removal mid-operation: the PCSCError from transmitRaw propagates
-    // through the channel; the bridge must catch it at the C boundary.
+    // Card removal mid-operation: the failure from transmitRaw reaches the bridge
+    // as an exception out of the channel; the bridge must catch it at the C boundary.
     channel.transmitHandler = [](const auto&) -> APDUResponse { throw std::runtime_error("card removed"); };
 
     sc_apdu_t a{};

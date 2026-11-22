@@ -3,6 +3,7 @@
 
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS_internal/SmartCard/CardSessionImpl.h>
+#include "open_error.h"
 
 #include <LibreSCRS/Auth/AuthRequirement.h>
 #include <LibreSCRS/Auth/CredentialResult.h>
@@ -18,10 +19,13 @@
 
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 #include <LibreSCRS_internal/SmartCard/CardAccessReader.h>
+#include <LibreSCRS_internal/SmartCard/ActivationError.h>
+#include <LibreSCRS_internal/SmartCard/ChannelDispatch.h>
 #include <LibreSCRS_internal/SmartCard/PaceDowngradeVerdict.h>
 
 #include "apdu.h"
 #include "chip_auth.h"
+#include <pcsc_classify.h>
 #include <pcsc_connection.h>
 
 #include <algorithm>
@@ -59,60 +63,15 @@ CardSession::CardSession() : d(std::make_unique<Impl>())
         LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag{}, std::string{});
 }
 
-// Private constructor — used by @ref open only. Exposes the old "throw on failure" shape internally so the existing
-// PCSCConnection constructor (which throws std::runtime_error with a
-// textual diagnostic) can be consumed without rewriting the transport
-// layer. The public @ref open factory translates any exception into a
-// structured @ref OpenError.
+// Private constructor -- used by @ref open only. It names the reader and holds
+// no connection yet: open() takes the connection and the ATR, and reports a
+// failure as the OpenError it is.
 CardSession::CardSession(std::string readerName) : d(std::make_unique<Impl>())
 {
     d->readerName = std::move(readerName);
-    try {
-        // CardSession is the sole sanctioned opener: the reader-name ctor is
-        // private + friended to this class, so it must be reached via `new`
-        // here (std::make_unique is not a friend and cannot call it).
-        d->ownedConn = std::unique_ptr<LibreSCRS::SmartCard::Internal::PCSCConnection>(
-            new LibreSCRS::SmartCard::Internal::PCSCConnection(d->readerName));
-    } catch (const LibreSCRS::SmartCard::Internal::PCSCError&) {
-        throw; // open() classifies it by its PC/SC code
-    } catch (const std::exception& e) {
-        throw std::runtime_error(std::string{"CardSession open failed: "} + e.what());
-    }
-    d->atr = d->ownedConn->getATR();
 }
 
 namespace {
-
-// The category of a failed open, from the PC/SC code the connection raised
-// -- on every body alike, PC/SC or CryptoTokenKit, which raise the same codes.
-OpenError::Kind classifyOpenError(LONG code) noexcept
-{
-    switch (static_cast<unsigned long>(code)) {
-    case static_cast<unsigned long>(SCARD_E_NO_SMARTCARD):
-    case static_cast<unsigned long>(SCARD_W_REMOVED_CARD):
-        return OpenError::Kind::NoCardPresent;
-    case static_cast<unsigned long>(SCARD_E_PROTO_MISMATCH):
-    case static_cast<unsigned long>(SCARD_W_UNRESPONSIVE_CARD):
-    case static_cast<unsigned long>(SCARD_W_UNPOWERED_CARD):
-    case static_cast<unsigned long>(SCARD_F_COMM_ERROR):
-        return OpenError::Kind::ProtocolError;
-    case static_cast<unsigned long>(SCARD_E_SHARING_VIOLATION):
-        return OpenError::Kind::SessionRefused;
-    default:
-        return OpenError::Kind::ReaderUnavailable;
-    }
-}
-
-// Shared failure message for CardSession::open(). Constructed once at load
-// (LocalizedText allocates two std::strings) so open()'s noexcept body never
-// runs a throwing first-call static initialisation — a load-time OOM here
-// terminates before main(), never a per-call terminate in the noexcept path.
-// The neutral translator-friendly key surfaces to hosts, which are free to
-// refine based on @ref OpenError::kind; the defaultText is a plain sentence so
-// an untranslated host still has readable text.
-const LocalizedText kOpenFailedMsg{
-    "librescrs.smartcard.error.openFailed",
-    "Failed to open the card session. Check that the reader is connected and a card is inserted."};
 
 // Runs @p fn ordered against the other threads that use the session. The
 // thread that holds the session's ActiveChannelHolder already holds the
@@ -248,9 +207,13 @@ bool dropDeadSecureChannel(State& state) noexcept
     return answer;
 }
 
-[[nodiscard]] std::vector<std::uint8_t> statusOnly(std::uint8_t sw1, std::uint8_t sw2)
+[[nodiscard]] std::expected<std::vector<std::uint8_t>, LibreSCRS::SmartCard::TransportError>
+toAnswerOrError(std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError> r)
 {
-    return std::vector<std::uint8_t>{sw1, sw2};
+    if (!r) {
+        return std::unexpected(std::move(r.error()));
+    }
+    return toAnswer(std::move(*r));
 }
 
 } // namespace
@@ -259,20 +222,32 @@ std::expected<CardSession, OpenError> CardSession::open(std::string readerName) 
 {
     // 4.0 hardening: OpenError() is deleted; construction goes
     // through the field-wise ctor so userMessage cannot be silently empty.
-    // The shared failure message (@ref kOpenFailedMsg) is a load-time constant
+    // The shared failure message (Internal::kOpenFailedMsg) is a load-time constant
     // so this noexcept body performs no throwing static initialisation.
     // std::expected<CardSession, OpenError> implicitly converts from a
     // CardSession rvalue (success) and from std::unexpected<OpenError>
     // (failure). No in-place tag dispatch is needed in the C++23 form.
     try {
-        return CardSession{std::move(readerName)};
-    } catch (const LibreSCRS::SmartCard::Internal::PCSCError& e) {
-        return std::unexpected{OpenError{classifyOpenError(e.code()), kOpenFailedMsg,
-                                         std::string{"CardSession open failed: "} + e.what()}};
+        CardSession session{std::move(readerName)};
+        // CardSession is the sole sanctioned opener of a connection (open() is
+        // a member, a friend of the connection class).
+        auto conn = LibreSCRS::SmartCard::Internal::PCSCConnection::open(session.d->readerName);
+        if (!conn) {
+            return std::unexpected{LibreSCRS::SmartCard::Internal::toOpenError(conn.error())};
+        }
+        session.d->ownedConn = std::move(*conn);
+        auto atr = session.d->ownedConn->getATR();
+        if (!atr) {
+            return std::unexpected{LibreSCRS::SmartCard::Internal::toOpenError(atr.error())};
+        }
+        session.d->atr = std::move(*atr);
+        return session;
     } catch (const std::exception& e) {
-        return std::unexpected{OpenError{OpenError::Kind::ReaderUnavailable, kOpenFailedMsg, std::string{e.what()}}};
+        return std::unexpected{OpenError{OpenError::Kind::ReaderUnavailable,
+                                         LibreSCRS::SmartCard::Internal::kOpenFailedMsg, std::string{e.what()}}};
     } catch (...) {
-        return std::unexpected{OpenError{OpenError::Kind::ReaderUnavailable, kOpenFailedMsg,
+        return std::unexpected{OpenError{OpenError::Kind::ReaderUnavailable,
+                                         LibreSCRS::SmartCard::Internal::kOpenFailedMsg,
                                          std::string{"unknown non-std exception during CardSession open"}}};
     }
 }
@@ -385,28 +360,20 @@ LibreSCRS::SmartCard::Internal::APDUCommand buildSelectAppletCommand(const Apple
 
 constexpr int kSmActivationMaxAttempts = 3;
 
-// TU-local SM-aware transmit primitive. When @p activeChannel is non-null
-// and reports @c ChannelState::Open the APDU is dispatched through the
-// channel (which wraps + unwraps under the current SM tunnel); otherwise
-// the APDU is sent plain through @p conn. Anonymous-namespace static
-// linkage keeps the helper out of the dynamic symbol table.
-LibreSCRS::SmartCard::Internal::APDUResponse
-dispatchOverChannelOrConn(LibreSCRS::SecureChannel::ISecureChannel* activeChannel,
-                          LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
-                          const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token)
+// Why a SELECT sent during activation did not succeed, or nothing when it
+// did. A card that refuses it, or a channel that cannot carry it (closed,
+// failed, MAC refused), is a failed SELECT; the rest is the reader's.
+[[nodiscard]] std::optional<LibreSCRS::SecureChannel::ChannelActivationError> selectFailure(
+    const std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError>& answer)
 {
-    using LibreSCRS::SecureChannel::ChannelState;
-    if (activeChannel != nullptr && activeChannel->state() == ChannelState::Open) {
-        return activeChannel->transmit(cmd, std::move(token));
+    if (!answer) {
+        return LibreSCRS::SmartCard::Internal::activationErrorFor(
+            answer.error(), LibreSCRS::SmartCard::Internal::ActivationStep::SelectApplet);
     }
-    // A secure-messaging channel that is no longer open (failed, or closed by
-    // a reset) is never bypassed: the card still expects SM, a plain command
-    // ends its session there, and the caller meant the command to be
-    // protected. The channel-failed sentinel goes back without any I/O.
-    if (activeChannel != nullptr && activeChannel->carriesSm()) {
-        return LibreSCRS::SmartCard::Internal::APDUResponse{.data = {}, .sw1 = 0x6F, .sw2 = 0x02};
+    if (!answer->isSuccess()) {
+        return LibreSCRS::SecureChannel::ChannelActivationError::SelectAppletFailed;
     }
-    return conn.transmit(cmd);
+    return std::nullopt;
 }
 
 // The MF-scoped EF.CardAccess reader (SELECT 3F00 -> SELECT 011C -> READ
@@ -504,11 +471,18 @@ void CardSession::clearActiveChannel() noexcept
     }
 }
 
-std::vector<std::uint8_t> CardSession::transmit(std::span<const std::uint8_t> apdu, LibreSCRS::CancelToken token)
+std::expected<std::vector<std::uint8_t>, TransportError> CardSession::transmit(std::span<const std::uint8_t> apdu,
+                                                                               LibreSCRS::CancelToken token)
 {
     auto cmd = LibreSCRS::SmartCard::Internal::parseCommand(apdu);
     if (!cmd) {
-        throw std::invalid_argument("CardSession::transmit: not a command APDU in the accepted encoding");
+        return std::unexpected(
+            TransportError{TransportError::Kind::InvalidCommand, "not a command APDU in the accepted encoding"});
+    }
+    // Nothing is sent after the token fired, so nothing below is noted either.
+    if (token.isCancellable() && token.isCancelled()) {
+        return std::unexpected(
+            TransportError{TransportError::Kind::Cancelled, "cancelled before the command was sent"});
     }
     // The thread that holds the holder is the only one that can change the
     // session meanwhile: it reads and sends without the lock (the holder
@@ -522,7 +496,8 @@ std::vector<std::uint8_t> CardSession::transmit(std::span<const std::uint8_t> ap
         if (selectsAwayFromApplication(*cmd, recordedApplet(*d))) {
             forgetChannelApplet(*d);
         }
-        return toAnswer(dispatchOverChannelOrConn(d->activeChannel.get(), *d->ownedConn, *cmd, std::move(token)));
+        return toAnswerOrError(LibreSCRS::SmartCard::Internal::dispatchCommand(d->activeChannel.get(), *d->ownedConn,
+                                                                               *cmd, std::move(token)));
     }
     // A secure-messaging channel that is no longer open refuses the command
     // here as on the holder's thread: it is never dropped implicitly, so a
@@ -531,23 +506,24 @@ std::vector<std::uint8_t> CardSession::transmit(std::span<const std::uint8_t> ap
     if (selectsAwayFromApplication(*cmd, recordedApplet(*d))) {
         forgetChannelApplet(*d);
     }
-    return toAnswer(dispatchOverChannelOrConn(d->activeChannel.get(), *d->ownedConn, *cmd, std::move(token)));
+    return toAnswerOrError(
+        LibreSCRS::SmartCard::Internal::dispatchCommand(d->activeChannel.get(), *d->ownedConn, *cmd, std::move(token)));
 }
 
-std::vector<std::uint8_t> CardSession::transmitRaw(std::span<const std::uint8_t> apdu)
+std::expected<std::vector<std::uint8_t>, TransportError> CardSession::transmitRaw(std::span<const std::uint8_t> apdu)
 {
     // The thread that holds the holder runs an operation over the installed
     // channel: under a secure-messaging channel, open or not, the raw bytes
     // would bypass it, so they are refused. That thread is the only one that
     // can change the session meanwhile, so it reads and sends without the lock.
     if (d->callerOwnsActiveChannel()) {
-        if (d->activeChannel && d->activeChannel->carriesSm()) {
-            return statusOnly(0x6F, 0x02);
+        if (auto refused = LibreSCRS::SmartCard::Internal::refuseRawUnder(d->activeChannel.get())) {
+            return std::unexpected(std::move(*refused));
         }
         if (rawSelectsAwayFromApplication(apdu, recordedApplet(*d))) {
             forgetChannelApplet(*d);
         }
-        return toAnswer(d->ownedConn->transmitRaw(apdu));
+        return toAnswerOrError(d->ownedConn->transmitRaw(apdu));
     }
     // Any other thread: the decision and the exchange happen under the lock,
     // so no secure-messaging handshake on another thread can start between
@@ -557,13 +533,13 @@ std::vector<std::uint8_t> CardSession::transmitRaw(std::span<const std::uint8_t>
     // have meant them to be protected (only discardFailedChannel() or an
     // activation drops it).
     std::lock_guard lock(d->sessionMutex);
-    if (d->activeChannel && d->activeChannel->carriesSm()) {
-        return statusOnly(0x6F, 0x02);
+    if (auto refused = LibreSCRS::SmartCard::Internal::refuseRawUnder(d->activeChannel.get())) {
+        return std::unexpected(std::move(*refused));
     }
     if (rawSelectsAwayFromApplication(apdu, recordedApplet(*d))) {
         forgetChannelApplet(*d);
     }
-    return toAnswer(d->ownedConn->transmitRaw(apdu));
+    return toAnswerOrError(d->ownedConn->transmitRaw(apdu));
 }
 
 bool CardSession::discardFailedChannel() noexcept
@@ -586,14 +562,14 @@ std::uint64_t CardSession::generation() const noexcept
     return d->generation;
 }
 
-void CardSession::reconnect()
+std::expected<void, TransportError> CardSession::reconnect()
 {
-    d->ownedConn->reconnect();
+    return d->ownedConn->reconnect();
 }
 
-void CardSession::beginTransaction()
+std::expected<void, TransportError> CardSession::beginTransaction()
 {
-    d->ownedConn->beginTransaction();
+    return d->ownedConn->beginTransaction();
 }
 
 void CardSession::endTransaction() noexcept
@@ -674,12 +650,11 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
         return std::unexpected{ChannelActivationError::Internal};
     }
 
-    std::unique_ptr<LibreSCRS::SmartCard::Internal::CardTransaction> tx;
-    try {
-        tx = std::make_unique<LibreSCRS::SmartCard::Internal::CardTransaction>(*d->ownedConn);
-    } catch (const std::exception&) {
+    auto began = LibreSCRS::SmartCard::Internal::CardTransaction::begin(*d->ownedConn);
+    if (!began) {
         return std::unexpected{ChannelActivationError::ReaderError};
     }
+    auto tx = std::make_unique<LibreSCRS::SmartCard::Internal::CardTransaction>(std::move(*began));
 
     // Reusable live SM tunnel: route the target applet through it with a
     // wrapped SELECT (mirrors activateChannelWithSm Case 2). The SM context is
@@ -689,9 +664,8 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
     // the tunnel down — it is a legitimate answer, not a channel fault.
     if (d->activeChannel && d->activeChannel->state() == ChannelState::Open && d->activeChannel->carriesSm() &&
         d->activeChannel->supportsCrossAppletReuse()) {
-        auto wrappedSelect = d->activeChannel->transmit(buildSelectAppletCommand(aid), token);
-        if (!wrappedSelect.isSuccess()) {
-            return std::unexpected{ChannelActivationError::SelectAppletFailed};
+        if (const auto failure = selectFailure(d->activeChannel->transmit(buildSelectAppletCommand(aid), token))) {
+            return std::unexpected{*failure};
         }
         LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*d->activeChannel, aid);
         return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
@@ -713,16 +687,16 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
     // never reaches this point (refused above, or carried the SELECT), so it
     // is a plain channel bound to another applet, or a secure-messaging one
     // that failed or was closed. Dropped BEFORE the plain SELECT -- a dead
-    // secure-messaging channel left installed would refuse it (6F02) and
+    // secure-messaging channel left installed would answer ChannelUnusable and
     // lock every plain plugin out of the session.
     if (d->activeChannel) {
         d->activeChannel->close();
     }
     d->replaceActiveChannel();
 
-    auto selectResp = dispatchOverChannelOrConn(nullptr, *d->ownedConn, buildSelectAppletCommand(aid), token);
-    if (!selectResp.isSuccess()) {
-        return std::unexpected{ChannelActivationError::SelectAppletFailed};
+    if (const auto failure = selectFailure(LibreSCRS::SmartCard::Internal::dispatchCommand(
+            nullptr, *d->ownedConn, buildSelectAppletCommand(aid), token))) {
+        return std::unexpected{*failure};
     }
 
     // A plain channel carries no SM context, so no protocol is recorded.
@@ -810,12 +784,11 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
         return std::unexpected{ChannelActivationError::CredentialsRequired};
     }
 
-    std::unique_ptr<LibreSCRS::SmartCard::Internal::CardTransaction> tx;
-    try {
-        tx = std::make_unique<LibreSCRS::SmartCard::Internal::CardTransaction>(*d->ownedConn);
-    } catch (const std::exception&) {
+    auto began = LibreSCRS::SmartCard::Internal::CardTransaction::begin(*d->ownedConn);
+    if (!began) {
         return std::unexpected{ChannelActivationError::ReaderError};
     }
+    auto tx = std::make_unique<LibreSCRS::SmartCard::Internal::CardTransaction>(std::move(*began));
 
     // Case 1: live channel of correct protocol, already on the target applet
     //         — fast path; reuse without touching the wire.
@@ -835,9 +808,8 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
     if (d->activeChannel && d->activeChannel->state() == ChannelState::Open &&
         channelMatchesProtocol(*d->activeChannel) && !d->activeChannel->supportsCrossAppletReuse() &&
         d->activeChannel->currentApplet().empty() && !aid.empty() && aid == d->forgottenTunnelApplet) {
-        auto wrappedSelect = d->activeChannel->transmit(buildSelectAppletCommand(aid), token);
-        if (!wrappedSelect.isSuccess()) {
-            return std::unexpected{ChannelActivationError::SelectAppletFailed};
+        if (const auto failure = selectFailure(d->activeChannel->transmit(buildSelectAppletCommand(aid), token))) {
+            return std::unexpected{*failure};
         }
         LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*d->activeChannel, aid);
         d->forgottenTunnelApplet = AppletAid{};
@@ -856,9 +828,8 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
     //         Case 3 and a fresh handshake.
     if (d->activeChannel && d->activeChannel->state() == ChannelState::Open &&
         channelMatchesProtocol(*d->activeChannel) && d->activeChannel->supportsCrossAppletReuse()) {
-        auto wrappedSelect = d->activeChannel->transmit(buildSelectAppletCommand(aid), token);
-        if (!wrappedSelect.isSuccess()) {
-            return std::unexpected{ChannelActivationError::SelectAppletFailed};
+        if (const auto failure = selectFailure(d->activeChannel->transmit(buildSelectAppletCommand(aid), token))) {
+            return std::unexpected{*failure};
         }
         LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*d->activeChannel, aid);
         // Cross-applet wrapped-SELECT reuse keeps the same SM tunnel; re-record
@@ -913,6 +884,12 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
         try {
             const auto read =
                 LibreSCRS::SmartCard::Internal::readCardAccessDetailed(d->activeChannel.get(), *d->ownedConn, token);
+            // A reader that failed says nothing about the document: do not
+            // fall through to a CAN prompt on an empty OID set.
+            if (read.transportError) {
+                return std::unexpected{LibreSCRS::SmartCard::Internal::activationErrorFor(
+                    *read.transportError, LibreSCRS::SmartCard::Internal::ActivationStep::Other)};
+            }
             paceInfos = LibreSCRS::SecureChannel::parsePaceOidsFromCardAccess(read.data);
             definitivelyNoPace =
                 read.efDefinitivelyAbsent || (read.readSucceeded && !read.data.empty() && read.data[0] == 0x31 &&
@@ -992,14 +969,12 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                 }
             }
 
-            // dispatchOverChannelOrConn short-circuits to ownedConn here
-            // because the active channel has just been reset or was already
-            // null; the plain SELECT before BAC handshake therefore cannot
-            // collide with a live SM tunnel.
-            auto selectResp =
-                dispatchOverChannelOrConn(d->activeChannel.get(), *d->ownedConn, buildSelectAppletCommand(aid), token);
-            if (!selectResp.isSuccess()) {
-                return std::unexpected{ChannelActivationError::SelectAppletFailed};
+            // The active channel has just been reset or was already null, so
+            // the plain SELECT before the BAC handshake goes to the
+            // connection and cannot collide with a live SM tunnel.
+            if (const auto failure = selectFailure(LibreSCRS::SmartCard::Internal::dispatchCommand(
+                    d->activeChannel.get(), *d->ownedConn, buildSelectAppletCommand(aid), token))) {
+                return std::unexpected{*failure};
             }
 
             auto outcome = BacChannel::establish(*d->ownedConn, aid, *d->bacInput, token);
@@ -1019,29 +994,42 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                 // The pure verdict fails closed on anything but an
                 // SM-authenticated definitive absence.
                 {
+                    // A reader or tunnel failure that stops the cross-check
+                    // is no proof of a genuine BAC-only document, so every
+                    // way out but Proceed tears the tunnel down. A tunnel
+                    // that cannot carry the read (closed, MAC refused) is
+                    // the anomaly a forger causes: PaceDowngradeDetected.
+                    using LibreSCRS::SmartCard::Internal::activationErrorFor;
+                    using LibreSCRS::SmartCard::Internal::ActivationStep;
+                    std::optional<ChannelActivationError> stopped;
                     const auto reread = LibreSCRS::SmartCard::Internal::readCardAccessDetailed(d->activeChannel.get(),
                                                                                                *d->ownedConn, token);
-                    bool proceed = LibreSCRS::SmartCard::Internal::classifyPostBacCardAccess(reread) ==
-                                   LibreSCRS::SmartCard::Internal::PaceDowngradeVerdict::Proceed;
-                    // On a genuine BAC-only document the re-read left the MF
-                    // selected; restore the target applet before the holder is
-                    // handed back (the helper documents this caller obligation).
-                    // A failed SM re-SELECT is itself an integrity anomaly on the
-                    // tunnel, so it fails closed too.
-                    if (proceed) {
-                        proceed = d->activeChannel->transmit(buildSelectAppletCommand(aid), token).isSuccess();
+                    if (reread.transportError) {
+                        stopped = activationErrorFor(*reread.transportError, ActivationStep::DowngradeCheck);
+                    } else if (LibreSCRS::SmartCard::Internal::classifyPostBacCardAccess(reread) !=
+                               LibreSCRS::SmartCard::Internal::PaceDowngradeVerdict::Proceed) {
+                        stopped = ChannelActivationError::PaceDowngradeDetected;
+                    } else {
+                        // On a genuine BAC-only document the re-read left the
+                        // MF selected; restore the target applet before the
+                        // holder is handed back. A failed SM re-SELECT is
+                        // itself an integrity anomaly on the tunnel.
+                        const auto reselect = d->activeChannel->transmit(buildSelectAppletCommand(aid), token);
+                        if (!reselect) {
+                            stopped = activationErrorFor(reselect.error(), ActivationStep::DowngradeCheck);
+                        } else if (!reselect->isSuccess()) {
+                            stopped = ChannelActivationError::PaceDowngradeDetected;
+                        }
                     }
-                    if (!proceed) {
-                        // Forged downgrade (or SM anomaly): tear the tunnel down
-                        // and surface PaceDowngradeDetected. This is NOT a
-                        // wrong-credential condition — it is RETURNED (never
-                        // continued, so no retry re-enters) and the plugin maps
-                        // it to a non-auth failure, never markCredentialWrong.
+                    if (stopped) {
+                        // Returned, never continued, so no retry re-enters; the
+                        // plugin maps PaceDowngradeDetected to a non-auth
+                        // failure, never markCredentialWrong.
                         if (d->activeChannel) {
                             d->activeChannel->close();
                         }
                         d->replaceActiveChannel();
-                        return std::unexpected{ChannelActivationError::PaceDowngradeDetected};
+                        return std::unexpected{*stopped};
                     }
                 }
                 return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
@@ -1159,13 +1147,12 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             // installed channel. PACE handshake left currentApplet empty;
             // setCurrentApplet records the AID after a successful wrapped
             // SELECT so subsequent same-applet calls hit the fast path.
-            auto wrappedSelect = freshChannel->transmit(buildSelectAppletCommand(aid), token);
-            if (!wrappedSelect.isSuccess()) {
+            if (const auto failure = selectFailure(freshChannel->transmit(buildSelectAppletCommand(aid), token))) {
                 // Wrapped SELECT failed: the SM tunnel is established but
                 // the target applet is not reachable. Drop the channel and
-                // surface SelectAppletFailed; do not retry the handshake.
+                // surface the failure; do not retry the handshake.
                 freshChannel->close();
-                return std::unexpected{ChannelActivationError::SelectAppletFailed};
+                return std::unexpected{*failure};
             }
             LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*freshChannel, aid);
             // Record the protocol that won this channel. On the PACE branch
@@ -1227,8 +1214,45 @@ ChipAuthReport CardSession::performChipAuthentication(std::span<const std::uint8
     }
     const std::vector<std::uint8_t> dg14Raw(dg14.begin(), dg14.end());
 
-    // Reader and transport errors, and allocation failure, propagate from
-    // both paths: none of them says anything about the chip.
+    // One reading of a failed step, for both paths. Inside a PACE/BAC tunnel
+    // the chip's answer to an advertised protocol is a verdict (a refusal, or
+    // a clone holding the tunnel keys could dodge Failed by answering badly);
+    // on a plain channel a refusal is no evidence (a contact interface may
+    // admit the protocol only under SM). A reader failure is never a verdict.
+    auto reportFor = [&](EstablishKind kind, std::string detail, std::string protocol, bool inTunnel) {
+        switch (kind) {
+        case EstablishKind::NotSupported: {
+            ChipAuthReport report;
+            report.outcome = ChipAuthOutcome::NotSupported;
+            report.reason = ChipAuthReason::NotOffered;
+            report.protocolOid = std::move(protocol);
+            if (inTunnel) {
+                report.detail = std::move(detail);
+            }
+            return report;
+        }
+        case EstablishKind::ProtocolRefused:
+            if (!inTunnel) {
+                return noVerdict(ChipAuthReason::NotOffered, "chip refused Chip Authentication on plain channel",
+                                 std::move(protocol));
+            }
+            break;
+        case EstablishKind::Cancelled:
+            return noVerdict(ChipAuthReason::Cancelled, std::move(detail), std::move(protocol));
+        case EstablishKind::LocalCryptoFailure:
+            return noVerdict(ChipAuthReason::LocalCryptoFailure, std::move(detail), std::move(protocol));
+        case EstablishKind::ReaderError:
+            return noVerdict(ChipAuthReason::ReaderError, std::move(detail), std::move(protocol));
+        case EstablishKind::SmProofFailed:
+            break;
+        }
+        ChipAuthReport report;
+        report.outcome = ChipAuthOutcome::Failed;
+        report.protocolOid = std::move(protocol);
+        report.detail = std::move(detail);
+        return report;
+    };
+
     if (!d->activeChannel->carriesSm()) {
         // Plain channel: establish() returns a channel only after its proof
         // exchange verified under the derived keys.
@@ -1244,76 +1268,37 @@ ChipAuthReport CardSession::performChipAuthentication(std::span<const std::uint8
             return report;
         }
         // No upgrade: the plain channel stays, and its next command ends any
-        // SM the card left half-open (ISO 7816-4). A status-word refusal on a
-        // plain channel is no evidence against the chip (a contact interface
-        // may admit the protocol only under SM); a key agreement whose proof
-        // failed is.
-        const auto& error = upgraded.error();
-        switch (error.kind) {
-        case EstablishKind::NotSupported: {
-            ChipAuthReport report;
-            report.outcome = ChipAuthOutcome::NotSupported;
-            report.reason = ChipAuthReason::NotOffered;
-            report.protocolOid = error.protocol;
-            return report;
-        }
-        case EstablishKind::ProtocolRefused:
-            return noVerdict(ChipAuthReason::NotOffered, "chip refused Chip Authentication on plain channel",
-                             error.protocol);
-        case EstablishKind::Cancelled:
-            return noVerdict(ChipAuthReason::Cancelled, error.detail, error.protocol);
-        case EstablishKind::LocalCryptoFailure:
-            return noVerdict(ChipAuthReason::LocalCryptoFailure, error.detail, error.protocol);
-        case EstablishKind::SmProofFailed:
-            break;
-        }
-        ChipAuthReport report;
-        report.outcome = ChipAuthOutcome::Failed;
-        report.protocolOid = error.protocol;
-        report.detail = error.detail;
-        return report;
+        // SM the card left half-open (ISO 7816-4).
+        auto& error = upgraded.error();
+        return reportFor(error.kind, std::move(error.detail), std::move(error.protocol), false);
     }
 
     // Inside a PACE/BAC tunnel: the key agreement runs wrapped, after which
     // the card answers only under the derived keys, so the tunnel takes them
     // over and must prove them with a wrapped exchange before Passed.
     auto ca = emrtd::crypto::performChipAuth(*d->activeChannel, dg14Raw, token);
-    // A failure observed while the caller was cancelling says nothing about
-    // the chip.
-    auto failedUnlessCancelled = [&](std::string detail) {
-        if (isCancelled(token)) {
-            return noVerdict(ChipAuthReason::Cancelled, "cancelled during chip authentication", ca.protocol);
-        }
-        ChipAuthReport r;
-        r.outcome = ChipAuthOutcome::Failed;
-        r.protocolOid = ca.protocol;
-        r.detail = std::move(detail);
-        return r;
-    };
     switch (ca.chipAuthentication) {
-    case emrtd::crypto::ChipAuthResult::NOT_SUPPORTED: {
-        ChipAuthReport report;
-        report.outcome = ChipAuthOutcome::NotSupported;
-        report.reason = ChipAuthReason::NotOffered;
-        report.protocolOid = ca.protocol;
-        report.detail = ca.errorDetail;
-        return report;
-    }
-    case emrtd::crypto::ChipAuthResult::FAILED:
-        // Inside a PACE/BAC tunnel the chip's answer to an advertised protocol
-        // is a verdict: a status-word refusal, a response whose MAC does not
-        // verify, or a card-side SM abort (6987/6988). A clone holding the
-        // tunnel keys could otherwise dodge Failed by answering badly. These
-        // are answers from the card, not reader errors, which propagate. Any
-        // other failure happened on this side.
-        if (ca.chipRefusedProtocol) {
-            return failedUnlessCancelled(ca.errorDetail);
+    case emrtd::crypto::ChipAuthResult::NOT_SUPPORTED:
+        return reportFor(EstablishKind::NotSupported, std::move(ca.errorDetail), std::move(ca.protocol), true);
+    case emrtd::crypto::ChipAuthResult::FAILED: {
+        // A failure observed while the caller was cancelling says nothing
+        // about the chip.
+        if (isCancelled(token)) {
+            return reportFor(EstablishKind::Cancelled, "cancelled during chip authentication", std::move(ca.protocol),
+                             true);
         }
-        return noVerdict(ChipAuthReason::LocalCryptoFailure, ca.errorDetail, ca.protocol);
+        EstablishKind kind = EstablishKind::LocalCryptoFailure;
+        if (ca.transportError) {
+            kind = LibreSCRS::SecureChannel::chipAuthKindFor(*ca.transportError);
+        } else if (ca.chipRefusedProtocol) {
+            kind = EstablishKind::ProtocolRefused;
+        }
+        return reportFor(kind, std::move(ca.errorDetail), std::move(ca.protocol), true);
+    }
     case emrtd::crypto::ChipAuthResult::NOT_PERFORMED:
         // performChipAuth has no path that reports this; were one added, it
         // would be a run this side did not complete.
-        return noVerdict(ChipAuthReason::LocalCryptoFailure, ca.errorDetail, ca.protocol);
+        return reportFor(EstablishKind::LocalCryptoFailure, std::move(ca.errorDetail), std::move(ca.protocol), true);
     case emrtd::crypto::ChipAuthResult::PASSED:
         break;
     }
@@ -1329,8 +1314,18 @@ ChipAuthReport CardSession::performChipAuthentication(std::span<const std::uint8
                                                                         : LibreSCRS::SecureChannel::SmCipher::Aes;
     LibreSCRS::SecureChannel::detail::ChannelStateMutator::replaceKeys(*d->activeChannel, std::move(keys));
     const auto proof = LibreSCRS::SecureChannel::confirmSmAfterKeyChange(*d->activeChannel, aid, token);
-    if (!proof.proven) {
-        return failedUnlessCancelled("chip authentication key agreement did not verify");
+    switch (proof.outcome) {
+    case LibreSCRS::SecureChannel::SmKeyProof::Outcome::Proven:
+        break;
+    case LibreSCRS::SecureChannel::SmKeyProof::Outcome::NotProven:
+        return reportFor(EstablishKind::SmProofFailed, "chip authentication key agreement did not verify", ca.protocol,
+                         true);
+    case LibreSCRS::SecureChannel::SmKeyProof::Outcome::Cancelled:
+        return reportFor(EstablishKind::Cancelled, "cancelled during chip authentication", ca.protocol, true);
+    case LibreSCRS::SecureChannel::SmKeyProof::Outcome::ReaderError: {
+        auto failure = LibreSCRS::SecureChannel::proofReaderFailure(proof, ca.protocol);
+        return reportFor(failure.kind, std::move(failure.detail), std::move(failure.protocol), true);
+    }
     }
     // When the proof exchange selected @p aid through the tunnel, the channel
     // records it so a later activation for another applet re-selects.

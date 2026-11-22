@@ -46,6 +46,8 @@ TEST(CardSessionOpen, AnEmptyReaderIsNoCardPresent)
     ASSERT_FALSE(opened.has_value());
     EXPECT_EQ(opened.error().kind, LibreSCRS::SmartCard::OpenError::Kind::NoCardPresent)
         << opened.error().diagnosticDetail.value_or("");
+    EXPECT_EQ(opened.error().diagnosticDetail.value_or("<none>"),
+              "CardSession open failed: SCardConnect failed on reader: Empty Reader");
 }
 
 TEST(CardSessionOpen, AProtocolMismatchIsAProtocolError)
@@ -54,6 +56,8 @@ TEST(CardSessionOpen, AProtocolMismatchIsAProtocolError)
     auto opened = LibreSCRS::SmartCard::CardSession::open("Mismatched Reader");
     ASSERT_FALSE(opened.has_value());
     EXPECT_EQ(opened.error().kind, LibreSCRS::SmartCard::OpenError::Kind::ProtocolError);
+    EXPECT_EQ(opened.error().diagnosticDetail.value_or("<none>"),
+              "CardSession open failed: SCardConnect failed on reader: Mismatched Reader");
 }
 
 TEST(CardSessionOpen, AnUnknownReaderIsReaderUnavailable)
@@ -62,6 +66,8 @@ TEST(CardSessionOpen, AnUnknownReaderIsReaderUnavailable)
     auto opened = LibreSCRS::SmartCard::CardSession::open("Gone Reader");
     ASSERT_FALSE(opened.has_value());
     EXPECT_EQ(opened.error().kind, LibreSCRS::SmartCard::OpenError::Kind::ReaderUnavailable);
+    EXPECT_EQ(opened.error().diagnosticDetail.value_or("<none>"),
+              "CardSession open failed: SCardConnect failed on reader: Gone Reader");
 }
 
 // A card another client holds is there and answering; the open may succeed
@@ -72,4 +78,6 @@ TEST(CardSessionOpen, ACardHeldByAnotherClientIsSessionRefused)
     auto opened = LibreSCRS::SmartCard::CardSession::open("Busy Reader");
     ASSERT_FALSE(opened.has_value());
     EXPECT_EQ(opened.error().kind, LibreSCRS::SmartCard::OpenError::Kind::SessionRefused);
+    EXPECT_EQ(opened.error().diagnosticDetail.value_or("<none>"),
+              "CardSession open failed: SCardConnect failed on reader: Busy Reader");
 }

@@ -78,7 +78,8 @@ protected:
         if (registry->size() == 0)
             GTEST_SKIP() << "no plugins loaded from " << PLUGIN_DIR;
 
-        const auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+        const auto readers =
+            LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders().value_or(std::vector<std::string>{});
         if (readers.empty())
             GTEST_SKIP() << "no readers";
 

@@ -24,6 +24,7 @@
 #include <array>
 #include <cstring>
 #include <memory>
+#include <new>
 #include <stdexcept>
 #include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
 
@@ -475,7 +476,14 @@ ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel
     }
 
     LibreSCRS::SmartCard::Internal::APDUCommand mseCmd{0x00, 0x22, 0x41, 0xA4, mseData, 0, false};
-    auto mseResp = channel.transmit(mseCmd, token);
+    auto mseSent = channel.transmit(mseCmd, token);
+    if (!mseSent) {
+        result.chipAuthentication = ChipAuthResult::FAILED;
+        result.errorDetail = mseSent.error().detail;
+        result.transportError = std::move(mseSent.error());
+        return result;
+    }
+    const auto& mseResp = *mseSent;
 
     if (mseResp.sw1 != 0x90 && mseResp.sw1 != 0x62) {
         result.chipAuthentication = ChipAuthResult::FAILED;
@@ -489,7 +497,14 @@ ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel
     auto pubKeyDO = buildTlv(0x80, terminalPubBytes);
     auto gaData = buildTlv(0x7C, pubKeyDO);
     LibreSCRS::SmartCard::Internal::APDUCommand gaCmd{0x00, 0x86, 0x00, 0x00, gaData, 0x00, true};
-    auto gaResp = channel.transmit(gaCmd, token);
+    auto gaSent = channel.transmit(gaCmd, token);
+    if (!gaSent) {
+        result.chipAuthentication = ChipAuthResult::FAILED;
+        result.errorDetail = gaSent.error().detail;
+        result.transportError = std::move(gaSent.error());
+        return result;
+    }
+    const auto& gaResp = *gaSent;
 
     if (gaResp.sw1 != 0x90 && gaResp.sw1 != 0x62) {
         result.chipAuthentication = ChipAuthResult::FAILED;
@@ -531,8 +546,20 @@ ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel
     LibreSCRS::Internal::Crypto::CleanseGuard cleaner{sharedSecret};
 
     // --- Derive new session keys using KDF ---
-    auto kEnc = detail::kdf(sharedSecret, 1, algoInfo.isDES3, algoInfo.keyLen);
-    auto kMAC = detail::kdf(sharedSecret, 2, algoInfo.isDES3, algoInfo.keyLen);
+    std::vector<uint8_t> kEnc;
+    std::vector<uint8_t> kMAC;
+    try {
+        kEnc = detail::kdf(sharedSecret, 1, algoInfo.isDES3, algoInfo.keyLen);
+        kMAC = detail::kdf(sharedSecret, 2, algoInfo.isDES3, algoInfo.keyLen);
+    } catch (const std::bad_alloc&) {
+        throw;
+    } catch (const std::exception&) {
+        // A digest failure is a failure on this side, never a verdict about the chip.
+        LibreSCRS::Internal::Crypto::CleanseGuard partial{kEnc, kMAC};
+        result.chipAuthentication = ChipAuthResult::FAILED;
+        result.errorDetail = "key derivation failed";
+        return result;
+    }
 
     // Scope guard: cleanse derived keys on all exit paths
     LibreSCRS::Internal::Crypto::CleanseGuard derivedCleaner{kEnc, kMAC};

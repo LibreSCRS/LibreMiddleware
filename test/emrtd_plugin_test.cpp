@@ -38,6 +38,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <expected>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -385,7 +386,7 @@ TEST(EMRTDHardwareTest, PaceMRZEndToEnd)
     if (!mrz)
         GTEST_SKIP() << "Set LIBRESCRS_TEST_MRZ_DOC, LIBRESCRS_TEST_MRZ_DOB, LIBRESCRS_TEST_MRZ_EXPIRY to run";
 
-    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders().value_or(std::vector<std::string>{});
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
@@ -424,7 +425,7 @@ TEST(EMRTDHardwareTest, PassiveAuthEndToEnd)
     if (!mrz)
         GTEST_SKIP() << "Set LIBRESCRS_TEST_MRZ_DOC, LIBRESCRS_TEST_MRZ_DOB, LIBRESCRS_TEST_MRZ_EXPIRY to run";
 
-    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders().value_or(std::vector<std::string>{});
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
@@ -469,7 +470,7 @@ TEST(EMRTDHardwareTest, ChipAuthEndToEnd)
     if (!mrz)
         GTEST_SKIP() << "Set LIBRESCRS_TEST_MRZ_DOC, LIBRESCRS_TEST_MRZ_DOB, LIBRESCRS_TEST_MRZ_EXPIRY to run";
 
-    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders().value_or(std::vector<std::string>{});
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
@@ -524,7 +525,7 @@ TEST(EMRTDHardwareTest, PaceCanEndToEnd)
     if (can == nullptr || *can == '\0')
         GTEST_SKIP() << "Set LIBRESCRS_TEST_CAN to run";
 
-    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders().value_or(std::vector<std::string>{});
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
@@ -607,7 +608,7 @@ TEST(EMRTDHardwareTest, PaceCanEndToEnd)
 // no Terminal Authentication available, and on the SRB-eID-V2.00 family its
 // SM SELECT is answered with 6988 AND the card then kills the SM session — so
 // every LATER file (DG11, DG12, the national annex) died collaterally with
-// 6F02, silently: the holder saw a read that "worked" minus their address and
+// ChannelUnusable, silently: the holder saw a read that "worked" minus their address and
 // issuing data. The EAC-protected pair must instead surface as "EAC required"
 // without an on-card attempt while the rest of the advertised set survives.
 // Set LIBRESCRS_TEST_CAN (and optionally LIBRESCRS_TEST_READER_INDEX) to run.
@@ -618,7 +619,7 @@ TEST(EMRTDHardwareTest, PaceCanAdvertisedReadableGroupsAllArrive)
     if (can == nullptr || *can == '\0')
         GTEST_SKIP() << "Set LIBRESCRS_TEST_CAN to run";
 
-    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders().value_or(std::vector<std::string>{});
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
@@ -701,7 +702,7 @@ TEST(EMRTDHardwareTest, ContactPlainReadChipAuthEndToEnd)
     if (ridx == nullptr || *ridx == '\0')
         GTEST_SKIP() << "Set LIBRESCRS_TEST_CONTACT_READER_INDEX to run";
 
-    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders().value_or(std::vector<std::string>{});
     const std::size_t idx = static_cast<std::size_t>(std::atoi(ridx));
     if (idx >= readers.size())
         GTEST_SKIP() << "reader index out of range";
@@ -754,7 +755,7 @@ TEST(EMRTDHardwareTest, StreamingGroupOrder)
     if (!mrz)
         GTEST_SKIP() << "Set LIBRESCRS_TEST_MRZ_DOC, LIBRESCRS_TEST_MRZ_DOB, LIBRESCRS_TEST_MRZ_EXPIRY to run";
 
-    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders().value_or(std::vector<std::string>{});
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
@@ -2749,6 +2750,27 @@ struct BacCardOracle
     int rawReadAttempts = 0; // SM READ BINARYs seen in the DeactivatedConfirmed
                              // scenario — the reader must never issue one
 
+    // Faults the reader (not the card) raises in the SM phase.
+    bool readerErrorOnMfSelect = false;   // the EF.CardAccess re-read cannot be carried
+    bool readerErrorOnAidSelect = false;  // the target applet cannot be re-selected
+    bool corruptAidSelectAnswer = false;  // the wrapped SELECT answer fails its MAC
+    bool unpaddedAidSelectAnswer = false; // authentic MAC, body that cannot be unwrapped
+    bool unpaddedNext = false;
+
+    // The reader's fault for a wrapped command, or nothing.
+    std::optional<LibreSCRS::SmartCard::TransportError> smFault(std::span<const std::uint8_t> wrapped) const
+    {
+        if (wrapped.size() < 4)
+            return std::nullopt;
+        const bool mfSelect = wrapped[1] == 0xA4 && wrapped[2] == 0x00;
+        const bool aidSelect = wrapped[1] == 0xA4 && wrapped[2] == 0x04;
+        if ((readerErrorOnMfSelect && mfSelect) || (readerErrorOnAidSelect && aidSelect)) {
+            return LibreSCRS::SmartCard::TransportError{LibreSCRS::SmartCard::TransportError::Kind::NoCardPresent,
+                                                        "scripted: the card left the field"};
+        }
+        return std::nullopt;
+    }
+
     // Handshake + pre-establish plain SELECT (typed transmit()).
     APDUResponse onTransmit(const APDUCommand& cmd)
     {
@@ -2807,6 +2829,11 @@ struct BacCardOracle
 
         if (ins == 0xA4 && p1 == 0x04) {
             // restore SELECT by AID after the MF navigation -> success
+            corruptMac = corruptAidSelectAnswer;
+            if (unpaddedAidSelectAnswer) {
+                data = {0x01};
+                unpaddedNext = true;
+            }
         } else if (ins == 0xA4 && p1 == 0x00) {
             const bool isMf = (selectCount == 0);
             ++selectCount;
@@ -2849,7 +2876,7 @@ struct BacCardOracle
 
         std::vector<std::uint8_t> do87;
         if (!data.empty()) {
-            auto ct = det::des3Encrypt(sessEnc, det::pad(data, 8));
+            auto ct = det::des3Encrypt(sessEnc, unpaddedNext ? std::vector<std::uint8_t>(8, 0x00) : det::pad(data, 8));
             do87.push_back(0x87);
             appendBerLength(do87, 1 + ct.size());
             do87.push_back(0x01);
@@ -2893,7 +2920,12 @@ std::shared_ptr<BacCardOracle> armBacDowngradeSession(LibreSCRS::SmartCard::Card
 
     auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(session);
     conn.setTransmitFilter([oracle](const APDUCommand& cmd) { return oracle->onTransmit(cmd); });
-    conn.setDetachedRawResponder([oracle](std::span<const std::uint8_t> b) { return oracle->onTransmitRaw(b); });
+    conn.setDetachedRawResponder(
+        [oracle](std::span<const std::uint8_t> b) -> std::expected<APDUResponse, LibreSCRS::SmartCard::TransportError> {
+            if (auto fault = oracle->smFault(b))
+                return std::unexpected(std::move(*fault));
+            return oracle->onTransmitRaw(b);
+        });
     return oracle;
 }
 
@@ -3012,6 +3044,105 @@ TEST(BacDowngradeGuard, BacEstablishAbortsOnTerminationWarningSmReread)
     EXPECT_TRUE(oracle->established);
     EXPECT_GT(oracle->smInvocations, 0);
     EXPECT_FALSE(session->hasLiveSecureChannel());
+}
+
+// The reader failing while the EF.CardAccess is re-read through the fresh BAC
+// tunnel says nothing about the document: ReaderError, not a downgrade, and
+// the tunnel does not stay installed on an unfinished cross-check.
+TEST(BacDowngradeGuard, AReaderErrorWhileReReadingCardAccessAfterBacIsNotADowngrade)
+{
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto oracle = armBacDowngradeSession(*session, SmRereadScenario::AbsentConfirmed);
+    oracle->readerErrorOnMfSelect = true;
+
+    auto result =
+        session->activateChannelWithSm(emrtdAid(), LibreSCRS::SmartCard::BacRequest{}, LibreSCRS::CancelToken{});
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), ChannelActivationError::ReaderError);
+    EXPECT_TRUE(oracle->established);
+    EXPECT_FALSE(session->hasLiveSecureChannel());
+}
+
+TEST(BacDowngradeGuard, AReaderErrorOnTheSelectThatRestoresTheAppletIsReaderError)
+{
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto oracle = armBacDowngradeSession(*session, SmRereadScenario::AbsentConfirmed);
+    oracle->readerErrorOnAidSelect = true;
+
+    auto result =
+        session->activateChannelWithSm(emrtdAid(), LibreSCRS::SmartCard::BacRequest{}, LibreSCRS::CancelToken{});
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), ChannelActivationError::ReaderError);
+    EXPECT_FALSE(session->hasLiveSecureChannel());
+}
+
+// A tunnel that answers the wrapped SELECT of the applet with a frame that
+// fails its MAC is a failed SELECT, as it always was.
+TEST(BacDowngradeGuard, AWrappedSelectThatFailsTheChannelIsSelectAppletFailed)
+{
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto oracle = armBacDowngradeSession(*session, SmRereadScenario::AbsentConfirmed);
+    {
+        auto first =
+            session->activateChannelWithSm(emrtdAid(), LibreSCRS::SmartCard::BacRequest{}, LibreSCRS::CancelToken{});
+        ASSERT_TRUE(first.has_value());
+    }
+    // The applet was selected away from; selecting it again rides the tunnel.
+    session->forgetCurrentApplet();
+    oracle->corruptAidSelectAnswer = true;
+
+    auto result =
+        session->activateChannelWithSm(emrtdAid(), LibreSCRS::SmartCard::BacRequest{}, LibreSCRS::CancelToken{});
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), ChannelActivationError::SelectAppletFailed);
+}
+
+// The same, when the tunnel cannot unwrap the answer at all (authentic MAC,
+// body that is no padded block): the channel is unusable, still a failed SELECT.
+TEST(BacDowngradeGuard, AWrappedSelectTheChannelCannotUnwrapIsSelectAppletFailed)
+{
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto oracle = armBacDowngradeSession(*session, SmRereadScenario::AbsentConfirmed);
+    {
+        auto first =
+            session->activateChannelWithSm(emrtdAid(), LibreSCRS::SmartCard::BacRequest{}, LibreSCRS::CancelToken{});
+        ASSERT_TRUE(first.has_value());
+    }
+    session->forgetCurrentApplet();
+    oracle->unpaddedAidSelectAnswer = true;
+
+    auto result =
+        session->activateChannelWithSm(emrtdAid(), LibreSCRS::SmartCard::BacRequest{}, LibreSCRS::CancelToken{});
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), ChannelActivationError::SelectAppletFailed);
+}
+
+TEST(CardAccessReader, AReaderErrorIsReportedNotHidden)
+{
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    int sent = 0;
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*session);
+    conn.setTransmitFilter(
+        [&sent](const APDUCommand&) -> std::expected<APDUResponse, LibreSCRS::SmartCard::TransportError> {
+            if (++sent == 1)
+                return APDUResponse{{}, 0x90, 0x00}; // MF selected
+            return std::unexpected(LibreSCRS::SmartCard::TransportError{
+                LibreSCRS::SmartCard::TransportError::Kind::NoCardPresent, "scripted: the card left the field"});
+        });
+
+    const auto read = LibreSCRS::SmartCard::Internal::readCardAccessDetailed(nullptr, conn, LibreSCRS::CancelToken{});
+
+    ASSERT_TRUE(read.transportError.has_value());
+    EXPECT_EQ(read.transportError->kind, LibreSCRS::SmartCard::TransportError::Kind::NoCardPresent);
+    EXPECT_FALSE(read.mfSelected) << "every flag stays false once the reader failed";
+    EXPECT_FALSE(read.efDefinitivelyAbsent);
+    EXPECT_FALSE(read.readSucceeded);
+    EXPECT_TRUE(read.data.empty());
 }
 
 // Consumer (3) of the definitive-absence signal: CardSession's hoisted

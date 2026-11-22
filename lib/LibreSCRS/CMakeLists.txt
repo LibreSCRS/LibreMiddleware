@@ -237,6 +237,8 @@ add_library(LibreSCRS_SmartCard SHARED
     SmartCard/CardSession.cpp
     SmartCard/DefaultScanProvider.cpp
     SmartCard/MonitorService.cpp
+    SmartCard/open_error.cpp
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_classify.cpp
     # The connection holds process-wide card state, so it is defined here and
     # only here; every other image imports it from this library. macOS reaches
     # the card through one held CryptoTokenKit session, everything else
@@ -561,6 +563,8 @@ set_target_properties(LibreSCRS_SmartCard_TestHelpers PROPERTIES
 # ──────────────────────────────────────────────────────────────────────────
 add_library(LibreSCRS_SmartCard_RawDiagnostic OBJECT
     SmartCard/raw_diagnostic/pcsc_raw_diagnostic.cpp
+    SmartCard/open_error.cpp
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_classify.cpp
     SmartCard/test_helpers/pcsc_connection_test_helpers.cpp
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
     $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_ctk.cpp>
@@ -602,6 +606,7 @@ set_target_properties(LibreSCRS_SmartCard_RawDiagnostic PROPERTIES POSITION_INDE
 if(NOT APPLE)
     add_library(LibreSCRS_SmartCard_PcscForTests OBJECT
         SmartCard/test_helpers/pcsc_connection_test_helpers.cpp
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_classify.cpp
         ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
         ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_pcsc.cpp
     )
@@ -666,6 +671,7 @@ set_target_properties(LibreSCRS_SecureChannel_ForTests PROPERTIES POSITION_INDEP
 # ──────────────────────────────────────────────────────────────────────────
 add_library(LibreSCRS_SmartCard_CtkForTests OBJECT
     SmartCard/test_helpers/pcsc_connection_test_helpers.cpp
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_classify.cpp
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_ctk.cpp
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_scan_provider.cpp

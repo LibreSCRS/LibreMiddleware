@@ -6,6 +6,7 @@
 #include "apdu.h"
 #include <smartcard/card_connection.h>
 #include <smartcard/chunked_read.h>
+#include <smartcard/or_throw.h>
 #include "date_format.h"
 #include "tlv.h"
 #include <stdexcept>
@@ -47,7 +48,8 @@ static std::string findUtf16String(const std::vector<LibreSCRS::SmartCard::Inter
 bool HealthCard::probe(LibreSCRS::SmartCard::IConnection& conn)
 {
     try {
-        auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(protocol::AID_SERVSZK));
+        auto resp = LibreSCRS::SmartCard::Internal::orThrow(
+            conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(protocol::AID_SERVSZK)));
         return resp.isSuccess();
     } catch (...) {
         return false;
@@ -63,7 +65,8 @@ HealthCard::~HealthCard() = default;
 
 void HealthCard::initCard()
 {
-    auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(protocol::AID_SERVSZK));
+    auto resp = LibreSCRS::SmartCard::Internal::orThrow(
+        conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(protocol::AID_SERVSZK)));
     if (!resp.isSuccess())
         throw std::runtime_error("Health card: SERVSZK AID selection failed");
 }
@@ -74,7 +77,8 @@ std::vector<uint8_t> HealthCard::readFile(const std::vector<uint8_t>& fileId)
         throw std::runtime_error("HealthCard: fileId must be at least 2 bytes");
 
     // SELECT FILE by ID (P1=0x00, P2=0x00) — required by health card SERVSZK applet
-    auto selectResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(fileId[0], fileId[1]));
+    auto selectResp = LibreSCRS::SmartCard::Internal::orThrow(
+        conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(fileId[0], fileId[1])));
     if (!selectResp.isSuccess())
         throw std::runtime_error("Health card: SELECT file failed for fileId " + std::to_string(fileId[0]) + "/" +
                                  std::to_string(fileId[1]) + " SW=" + std::to_string(selectResp.statusWord()));

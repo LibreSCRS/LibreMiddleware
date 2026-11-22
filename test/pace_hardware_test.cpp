@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
+#include <smartcard/or_throw.h>
 #include <gtest/gtest.h>
 #include <pace.h>
 #include <data_group.h>
@@ -43,20 +44,22 @@ TEST(PACEHardwareTest, PaceWithCAN)
     if (can.empty())
         GTEST_SKIP() << "Set LIBRESCRS_TEST_CAN to run";
 
-    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders().value_or(std::vector<std::string>{});
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
     auto connOwner = LibreSCRS::SmartCard::Internal::openRawDiagnostic(readers[0]);
-    auto& conn = *connOwner;
+    ASSERT_TRUE(connOwner) << connOwner.error().detail;
+    auto& conn = **connOwner;
+    using LibreSCRS::SmartCard::Internal::orThrow;
 
     // Read EF.CardAccess from MF
-    conn.transmit({0x00, 0xA4, 0x00, 0x00, {0x3F, 0x00}, 0x00, true});
-    auto selCA = conn.transmit({0x00, 0xA4, 0x00, 0x00, {0x01, 0x1C}, 0x00, true});
+    (void)orThrow(conn.transmit({0x00, 0xA4, 0x00, 0x00, {0x3F, 0x00}, 0x00, true}));
+    auto selCA = orThrow(conn.transmit({0x00, 0xA4, 0x00, 0x00, {0x01, 0x1C}, 0x00, true}));
     if (!selCA.isSuccess())
         GTEST_SKIP() << "No EF.CardAccess on card";
 
-    auto caResp = conn.transmit({0x00, 0xB0, 0x00, 0x00, {}, 0x00, true});
+    auto caResp = orThrow(conn.transmit({0x00, 0xB0, 0x00, 0x00, {}, 0x00, true}));
     auto paceEntries = parseCardAccessWithParams(caResp.data);
     ASSERT_FALSE(paceEntries.empty()) << "No PACE entries in CardAccess";
 
@@ -106,7 +109,7 @@ TEST(PACEHardwareTest, PaceAuthenticateAndReadCOM)
     if (can.empty())
         GTEST_SKIP() << "Set LIBRESCRS_TEST_CAN to run";
 
-    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders().value_or(std::vector<std::string>{});
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
@@ -134,7 +137,7 @@ TEST(PACEHardwareTest, ReadAndParseDG1)
     if (can.empty())
         GTEST_SKIP() << "Set LIBRESCRS_TEST_CAN to run";
 
-    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders().value_or(std::vector<std::string>{});
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
@@ -182,7 +185,7 @@ TEST(PACEHardwareTest, ReadDG2Photo)
     if (can.empty())
         GTEST_SKIP() << "Set LIBRESCRS_TEST_CAN to run";
 
-    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders().value_or(std::vector<std::string>{});
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 

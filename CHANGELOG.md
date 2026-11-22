@@ -28,36 +28,53 @@ Notable user-visible changes per release. Format follows
   secure messaging under the derived keys, inside a PACE or BAC tunnel it
   switches the tunnel to them. `Passed` is reported only after a protected
   exchange verified under the new keys; `Failed` means only that the chip
-  answered and did not prove its key. A cancel, a refusal on a plain channel or
-  a local crypto failure is `NotPerformed` with a `ChipAuthReason`, and a
-  reader error propagates as an exception. The session keys never leave the
-  library. The eMRTD plugin now uses it instead of running the protocol and
-  rotating the keys itself; a local crypto failure there is now reported as
-  not performed instead of failed, and a reader error during Chip
-  Authentication ends the read instead of being reported as a failed check.
+  answered and did not prove its key. A cancel, a refusal on a plain channel, a
+  local crypto failure or a reader failure is `NotPerformed` with a
+  `ChipAuthReason` (`ReaderError` for the reader), never a clone verdict:
+  only the card's own answers (an unverifiable response, a 6987/6988 abort, a
+  refusal inside a tunnel) can be `Failed`. The session keys never leave the
+  library. The eMRTD plugin uses it instead of running the protocol and
+  rotating the keys itself: there, a local crypto failure is now reported as
+  not performed instead of failed, and a reader failure during Chip
+  Authentication ends the read (`CommunicationError`) instead of being
+  reported as a failed check.
 
-- **Byte-level transport on `CardSession`.** `transmit` sends a command APDU
-  through the session's secure-messaging channel when one is open, refuses
-  (`6F02`, nothing sent) when an installed secure-messaging channel has
-  failed or was closed, and otherwise sends it plain, completing a chained
-  answer as the reader layer does. `transmitRaw` sends the bytes as given in
-  one exchange and refuses (`6F02`, nothing sent) while any secure-messaging
-  channel is installed, so no caller can desynchronise the card's secure
-  messaging. Neither ever drops a failed channel, from any thread: a command
-  meant to be protected never goes plain. `discardFailedChannel` removes a
-  failed channel where the host starts a new plain interaction;
+- **Byte-level transport on `CardSession`, and the `TransportError` it
+  reports.** `transmit`, `transmitRaw`, `reconnect` and `beginTransaction`
+  return `std::expected<..., TransportError>`; none throws a reader failure
+  (`TransportError`, `<LibreSCRS/SmartCard/TransportError.h>`, has a `kind` and
+  an English `detail` for logs). The kinds: `ReaderUnavailable`,
+  `NoCardPresent`, `CardReset`, `ProtocolError`, `SessionRefused`,
+  `ChannelUnusable`, `IntegrityFailure`, `SecureChannelActive`, `Cancelled`
+  and `InvalidCommand`; the enum is append-only. A success is the card's
+  answer as data followed by SW1 SW2, whatever the status word: a card's own
+  6987, 6988 or 6F00 is an answer, and the library invents no status word of
+  its own. The state of a secure channel is reported as a kind. `transmit`
+  sends a command through the session's secure-messaging channel when one is
+  open; an installed channel that failed or was closed answers
+  `ChannelUnusable` (nothing sent), a reader error under secure messaging and
+  a response that fails the MAC check (`IntegrityFailure`) fail the channel;
+  a fired cancel token is `Cancelled`, and bytes that are no command APDU are
+  `InvalidCommand`. `transmitRaw` sends the bytes as given in one exchange and
+  answers `SecureChannelActive` (nothing sent) while a secure-messaging
+  channel is open, so no caller can desynchronise the card's secure
+  messaging, and `ChannelUnusable` while a failed channel is still installed.
+  Neither ever drops a failed channel, from any thread: a
+  command meant to be protected never goes plain. `discardFailedChannel`
+  removes a failed channel where the host starts a new plain interaction;
   `CardPluginService::findAllCandidates` calls it before it probes the
   plugins, every card-plugin operation whose activation profile asks for no
   secure messaging calls it at its start, and activating another channel
-  replaces it. Both transmit calls return the answer as data followed by
-  SW1 SW2 and throw on a reader failure.
-  `beginTransaction`, `endTransaction`, `isTransactionHeld` and `reconnect`
-  reach the reader; `channelState`, `carriesSecureMessaging` and
+  replaces it. A plain `transmit` completes a chained answer as the reader
+  layer does. `beginTransaction`, `endTransaction`, `isTransactionHeld` and
+  `reconnect` reach the reader; `channelState`, `carriesSecureMessaging` and
   `forgetCurrentApplet` describe and adjust the session's channel; and
   `generation` is the session's identity, which `makeSessionKey` now uses.
   `hasLiveSecureChannel` and `activatedProtocol`, like the new channel
-  queries, now also answer on the thread that holds the session's
-  `ActiveChannelHolder`, where they used to deadlock.
+  queries, also answer on the thread that holds the session's
+  `ActiveChannelHolder`, where they would deadlock.
+  Channel activation (`activateChannelFor`, `activateChannelWithSm`) reports a
+  reader failure as `ReaderError` and a fired token as `Cancelled`.
 
 - **`TrustStoreService::adoptCachedTrustedLists`** (with
   `TrustStoreService::Sources`). Brings the configured Trusted List sources
@@ -589,7 +606,8 @@ Notable user-visible changes per release. Format follows
 - **Opening a session on an empty reader reports "no card".** The failure was
   classified by words in a message that never contained them, so every open
   failure read as an unavailable reader; it is now classified by the PC/SC
-  code.
+  code, on Linux and macOS alike (`NoCardPresent`, `ProtocolError`,
+  `SessionRefused`).
 - **Card answers and PINs are wiped from transport buffers**, and an OpenSC
   RSA decryption no longer leaves its plaintext in freed memory. The OpenSC
   plugin also finds every key and certificate on a card that holds more than

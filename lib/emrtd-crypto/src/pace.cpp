@@ -498,7 +498,7 @@ std::optional<std::vector<uint8_t>> derivePaceKpiSeed(PACEPasswordType passwordT
 // performPACE
 // ---------------------------------------------------------------------------
 
-std::expected<SessionKeys, PaceFailure> performPACE(LibreSCRS::SmartCard::IConnection& conn, const PACEParams& params)
+std::expected<SessionKeys, PaceError> performPACE(LibreSCRS::SmartCard::IConnection& conn, const PACEParams& params)
 {
     bool isDES3 = (paceOIDToSMAlgorithm(params.oid) == SMAlgorithm::DES3);
     size_t keyLen = keyLengthFromOID(params.oid);
@@ -520,7 +520,10 @@ std::expected<SessionKeys, PaceFailure> performPACE(LibreSCRS::SmartCard::IConne
     }
 
     LibreSCRS::SmartCard::Internal::APDUCommand mseCmd{0x00, 0x22, 0xC1, 0xA4, mseData, 0, false};
-    auto resp = conn.transmit(mseCmd);
+    auto sentMse = conn.transmit(mseCmd);
+    if (!sentMse)
+        return std::unexpected{PaceError{std::move(sentMse.error())}};
+    auto resp = std::move(*sentMse);
     if (!resp.isSuccess()) {
         // No secret has reached the card yet, so a refusal here is about the
         // mechanism -- unless the card is reporting on the password itself
@@ -533,7 +536,10 @@ std::expected<SessionKeys, PaceFailure> performPACE(LibreSCRS::SmartCard::IConne
 
     // --- Step 2: General Authenticate Step 1 — get encrypted nonce ---
     LibreSCRS::SmartCard::Internal::APDUCommand ga1Cmd{0x10, 0x86, 0x00, 0x00, {0x7C, 0x00}, 0x00, true};
-    resp = conn.transmit(ga1Cmd);
+    auto sentGa1 = conn.transmit(ga1Cmd);
+    if (!sentGa1)
+        return std::unexpected{PaceError{std::move(sentGa1.error())}};
+    resp = std::move(*sentGa1);
     if (!resp.isSuccess())
         return std::unexpected{PaceFailure::Failed};
 
@@ -599,7 +605,10 @@ std::expected<SessionKeys, PaceFailure> performPACE(LibreSCRS::SmartCard::IConne
     // Send PK_map to card, receive PK_map_ICC
     auto ga2Data = buildTlv(0x7C, buildTlv(0x81, pkMapBytes));
     LibreSCRS::SmartCard::Internal::APDUCommand ga2Cmd{0x10, 0x86, 0x00, 0x00, ga2Data, 0x00, true};
-    resp = conn.transmit(ga2Cmd);
+    auto sentGa2 = conn.transmit(ga2Cmd);
+    if (!sentGa2)
+        return std::unexpected{PaceError{std::move(sentGa2.error())}};
+    resp = std::move(*sentGa2);
     if (!resp.isSuccess())
         return std::unexpected{PaceFailure::Failed};
 
@@ -646,7 +655,10 @@ std::expected<SessionKeys, PaceFailure> performPACE(LibreSCRS::SmartCard::IConne
     // Send PK_agree, receive PK_agree_ICC
     auto ga3Data = buildTlv(0x7C, buildTlv(0x83, pkAgreeBytes));
     LibreSCRS::SmartCard::Internal::APDUCommand ga3Cmd{0x10, 0x86, 0x00, 0x00, ga3Data, 0x00, true};
-    resp = conn.transmit(ga3Cmd);
+    auto sentGa3 = conn.transmit(ga3Cmd);
+    if (!sentGa3)
+        return std::unexpected{PaceError{std::move(sentGa3.error())}};
+    resp = std::move(*sentGa3);
     if (!resp.isSuccess())
         return std::unexpected{PaceFailure::Failed};
 
@@ -682,7 +694,10 @@ std::expected<SessionKeys, PaceFailure> performPACE(LibreSCRS::SmartCard::IConne
     // Send T_IFD, receive T_ICC
     auto ga4Data = buildTlv(0x7C, buildTlv(0x85, tIFD));
     LibreSCRS::SmartCard::Internal::APDUCommand ga4Cmd{0x00, 0x86, 0x00, 0x00, ga4Data, 0x00, true};
-    resp = conn.transmit(ga4Cmd);
+    auto sentGa4 = conn.transmit(ga4Cmd);
+    if (!sentGa4)
+        return std::unexpected{PaceError{std::move(sentGa4.error())}};
+    resp = std::move(*sentGa4);
     if (!resp.isSuccess())
         return std::unexpected{PaceFailure::Failed};
 

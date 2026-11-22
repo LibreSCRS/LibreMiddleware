@@ -59,6 +59,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <functional>
 #include <initializer_list>
@@ -398,6 +399,31 @@ TEST(Pkcs15ProfileReadCensus, ReadCardPerformsExactlyOneProfileRead)
             << "readCard did not complete against the scripted card";
     });
     EXPECT_EQ(n, 1u);
+}
+
+// A reader failure in the middle of a multi-step read is not a half-read card:
+// the SELECTs succeed, the first READ BINARY finds the card gone, and the
+// result is a communication error with no data.
+TEST(Pkcs15ProfileReadCensus, ReaderFailureMidReadIsACommunicationError)
+{
+    auto rig = makeRig("Census Reader Removed Mid Read");
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*rig.session);
+    conn.setTransmitFilter(
+        [card = rig.card](const APDUCommand& cmd) -> std::expected<APDUResponse, LibreSCRS::SmartCard::TransportError> {
+            if (cmd.ins == 0xB0) {
+                return std::unexpected(LibreSCRS::SmartCard::TransportError{
+                    LibreSCRS::SmartCard::TransportError::Kind::NoCardPresent, "card removed"});
+            }
+            return (*card)(cmd);
+        });
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    const auto result = plugin->readCard(*rig.session);
+
+    EXPECT_EQ(result.status, LibreSCRS::Plugin::ReadResult::Status::CommunicationError);
+    EXPECT_FALSE(result.data.has_value());
 }
 
 TEST(Pkcs15ProfileReadCensus, ReadCertificatesPerformsExactlyOneProfileRead)

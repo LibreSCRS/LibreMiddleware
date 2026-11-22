@@ -20,6 +20,7 @@
 
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
+#include <LibreSCRS/SmartCard/TransportError.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 
 #include <openssl/ec.h>
@@ -28,6 +29,7 @@
 #include <openssl/x509.h>
 
 #include <cstdint>
+#include <expected>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -241,6 +243,13 @@ public:
         cloned = true;
     }
 
+    // Fail the exchange for @p ins as a reader that lost the card does.
+    void failIns(std::uint8_t ins, LibreSCRS::SmartCard::TransportError error)
+    {
+        failedIns = ins;
+        failure = std::move(error);
+    }
+
     // The SM oracle initialised during GENERAL AUTHENTICATE; null before that.
     [[nodiscard]] std::shared_ptr<AesSmCardOracle> smOracle() const noexcept
     {
@@ -256,20 +265,23 @@ public:
         return LibreSCRS::SecureChannel::ChannelState::Open;
     }
 
-    [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
+    [[nodiscard]] std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError>
     transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken /*token*/) override
     {
+        if (failure && cmd.ins == failedIns) {
+            return std::unexpected(*failure);
+        }
         if (refusedIns && cmd.ins == *refusedIns) {
-            return {{}, refusedSw1, refusedSw2};
+            return LibreSCRS::SmartCard::Internal::APDUResponse{{}, refusedSw1, refusedSw2};
         }
         if (cmd.ins == 0x22) { // MSE:Set AT
-            return {{}, 0x90, 0x00};
+            return LibreSCRS::SmartCard::Internal::APDUResponse{{}, 0x90, 0x00};
         }
         if (cmd.ins == 0x86) { // GENERAL AUTHENTICATE
             deriveFromGa(cmd.data);
-            return {{}, 0x90, 0x00};
+            return LibreSCRS::SmartCard::Internal::APDUResponse{{}, 0x90, 0x00};
         }
-        return {{}, 0x6D, 0x00};
+        return LibreSCRS::SmartCard::Internal::APDUResponse{{}, 0x6D, 0x00};
     }
 
     void close() override {}
@@ -309,6 +321,8 @@ private:
     std::uint8_t refusedSw1 = 0x69;
     std::uint8_t refusedSw2 = 0x82;
     bool cloned = false;
+    std::uint8_t failedIns = 0;
+    std::optional<LibreSCRS::SmartCard::TransportError> failure;
     std::shared_ptr<AesSmCardOracle> sm;
 };
 
@@ -362,9 +376,18 @@ public:
         cloned = true;
     }
 
+    /// Fail the exchange for @p ins as a reader that lost the card does: the
+    /// frame reaches the card (it is logged) and the transport reports @p error.
+    void failIns(std::uint8_t ins, LibreSCRS::SmartCard::TransportError error)
+    {
+        failedIns = ins;
+        failure = std::move(error);
+    }
+
     /// Run @p hook when a frame with @p ins arrives, before it is answered.
     /// A hook that returns a response replaces the card's answer (raw, as it
-    /// leaves the card); a hook may also throw, like a failing reader.
+    /// leaves the card); one that returns nothing is only a side effect, such
+    /// as firing a cancel. A reader that fails is @ref failIns.
     void onIns(std::uint8_t ins, std::function<std::optional<APDUResponse>()> hook)
     {
         hookIns = ins;
@@ -396,13 +419,34 @@ public:
     }
 
     /// A frame as the transport sends it (plain or wrapped).
-    [[nodiscard]] APDUResponse respond(std::span<const std::uint8_t> frame)
+    [[nodiscard]] std::expected<APDUResponse, LibreSCRS::SmartCard::TransportError>
+    respond(std::span<const std::uint8_t> frame)
+    {
+        if (failure && frame.size() >= 4 && frame[1] == failedIns) {
+            log.push_back(frame[1]);
+            return std::unexpected(*failure);
+        }
+        return respondFrame(frame);
+    }
+
+    /// A plain command, as a transport filter sees it.
+    [[nodiscard]] std::expected<APDUResponse, LibreSCRS::SmartCard::TransportError> respondPlain(const APDUCommand& cmd)
+    {
+        if (failure && cmd.ins == failedIns) {
+            log.push_back(cmd.ins);
+            return std::unexpected(*failure);
+        }
+        return respondPlainCommand(cmd);
+    }
+
+private:
+    [[nodiscard]] APDUResponse respondFrame(std::span<const std::uint8_t> frame)
     {
         if (frame.size() < 4) {
             return {{}, 0x6F, 0x00};
         }
         if ((frame[0] & 0x0C) == 0) {
-            return respondPlain(parsePlain(frame));
+            return respondPlainCommand(parsePlain(frame));
         }
         const std::uint8_t ins = frame[1];
         log.push_back(ins);
@@ -440,8 +484,7 @@ public:
         return resp;
     }
 
-    /// A plain command, as a transport filter sees it.
-    [[nodiscard]] APDUResponse respondPlain(const APDUCommand& cmd)
+    [[nodiscard]] APDUResponse respondPlainCommand(const APDUCommand& cmd)
     {
         log.push_back(cmd.ins);
         if (auto hooked = runHook(cmd.ins)) {
@@ -527,6 +570,8 @@ private:
     std::optional<std::uint8_t> hookIns;
     std::optional<std::uint8_t> brokenSmIns;
     std::function<std::optional<APDUResponse>()> insHook;
+    std::uint8_t failedIns = 0;
+    std::optional<LibreSCRS::SmartCard::TransportError> failure;
     std::function<APDUResponse(const APDUCommand&)> fileSystem;
     bool cloned = false;
     int agreements = 0;

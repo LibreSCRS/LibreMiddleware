@@ -17,13 +17,15 @@
 
 #include <pcsc_connection.h>
 
+#include <expected>
 #include <memory>
 #include <string>
 
 namespace LibreSCRS::SmartCard::Internal {
 
-/// Connect to @p readerName directly. Throws PCSCError when the reader has no
-/// card or PC/SC refuses the connection.
-[[nodiscard]] std::unique_ptr<PCSCConnection> openRawDiagnostic(const std::string& readerName);
+/// Connect to @p readerName directly. The error when the reader has no card or
+/// PC/SC refuses the connection.
+[[nodiscard]] std::expected<std::unique_ptr<PCSCConnection>, TransportError>
+openRawDiagnostic(const std::string& readerName);
 
 } // namespace LibreSCRS::SmartCard::Internal

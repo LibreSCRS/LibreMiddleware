@@ -13,6 +13,7 @@
 #include <ef_dir.h>
 #include <smartcard/chunked_read.h>
 #include <smartcard/i_connection.h>
+#include <smartcard/or_throw.h>
 
 namespace LibreSCRS::Annex {
 namespace {
@@ -27,9 +28,9 @@ constexpr std::uint8_t kEfDirLo = 0x00;
 [[nodiscard]] SC::APDUResponse dispatch(const AnnexContext& ctx, const SC::APDUCommand& cmd)
 {
     if (ctx.channel != nullptr && ctx.channel->state() == LibreSCRS::SecureChannel::ChannelState::Open) {
-        return ctx.channel->transmit(cmd, ctx.token);
+        return LibreSCRS::SmartCard::Internal::orThrow(ctx.channel->transmit(cmd, ctx.token));
     }
-    return ctx.conn->transmit(cmd);
+    return LibreSCRS::SmartCard::Internal::orThrow(ctx.conn->transmit(cmd));
 }
 
 /// Puts the master file back however the scope is left, including on a throw.

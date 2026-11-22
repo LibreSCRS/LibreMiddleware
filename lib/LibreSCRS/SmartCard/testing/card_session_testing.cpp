@@ -21,6 +21,7 @@
 
 #include "apdu.h"
 
+#include <expected>
 #include <memory>
 #include <string>
 #include <utility>
@@ -46,14 +47,16 @@ public:
         return channelState;
     }
 
-    [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
+    [[nodiscard]] std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError>
     transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& /*cmd*/, LibreSCRS::CancelToken /*token*/) override
     {
-        // 6F00: no card answered.
-        LibreSCRS::SmartCard::Internal::APDUResponse resp;
-        resp.sw1 = 0x6F;
-        resp.sw2 = 0x00;
-        return resp;
+        using Kind = LibreSCRS::SmartCard::TransportError::Kind;
+        if (channelState != ChannelState::Open) {
+            return std::unexpected(
+                LibreSCRS::SmartCard::TransportError{Kind::ChannelUnusable, "stand-in channel is not open"});
+        }
+        return std::unexpected(
+            LibreSCRS::SmartCard::TransportError{Kind::ReaderUnavailable, "stand-in channel: no card"});
     }
 
     void close() override

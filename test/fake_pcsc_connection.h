@@ -12,6 +12,7 @@
 
 #include "apdu.h"
 
+#include <expected>
 #include <functional>
 #include <utility>
 #include <vector>
@@ -22,14 +23,15 @@ class FakePCSCConnection final : public LibreSCRS::SmartCard::IConnection
 {
 public:
     using ResponseFn =
-        std::function<LibreSCRS::SmartCard::Internal::APDUResponse(const LibreSCRS::SmartCard::Internal::APDUCommand&)>;
+        std::function<std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError>(
+            const LibreSCRS::SmartCard::Internal::APDUCommand&)>;
 
     void setResponder(ResponseFn fn)
     {
         responder = std::move(fn);
     }
 
-    LibreSCRS::SmartCard::Internal::APDUResponse
+    std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError>
     transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) override
     {
         transmitted.push_back(cmd);
@@ -45,7 +47,8 @@ public:
     /// Record the raw bytes verbatim then dispatch the equivalent
     /// APDUCommand to @ref responder. Tests that care about the wire
     /// shape inspect @ref rawTransmitted instead of @ref transmitted.
-    LibreSCRS::SmartCard::Internal::APDUResponse transmitRaw(std::span<const std::uint8_t> cmdBytes) override
+    std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError>
+    transmitRaw(std::span<const std::uint8_t> cmdBytes) override
     {
         rawTransmitted.emplace_back(cmdBytes.begin(), cmdBytes.end());
         // For test purposes, build a minimal APDUCommand record so existing

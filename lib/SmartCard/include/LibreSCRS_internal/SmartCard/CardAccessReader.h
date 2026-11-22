@@ -42,8 +42,13 @@
 
 #include <apdu.h>
 #include <smartcard/i_connection.h>
+#include <LibreSCRS_internal/SmartCard/ChannelDispatch.h>
+
+#include <LibreSCRS/SmartCard/TransportError.h>
 
 #include <cstdint>
+#include <expected>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -62,6 +67,11 @@ struct CardAccessReadResult
     /// A READ BINARY was issued at the MF-selected EF.CardAccess and
     /// returned success (90 00). @ref data then holds its bytes.
     bool readSucceeded = false;
+    /// The reader failed to carry one of the exchanges. Set, every flag above
+    /// is @c false and @ref data is empty; the caller reads it BEFORE
+    /// classifying, because "could not read" is not "the document has no
+    /// PACE".
+    std::optional<LibreSCRS::SmartCard::TransportError> transportError;
     /// EF.CardAccess bytes, ready for @c emrtd::crypto::parseCardAccess.
     /// Empty unless a READ BINARY was issued (behaviour-preserving: the
     /// pre-extraction reader returned the raw read bytes even on a
@@ -69,27 +79,12 @@ struct CardAccessReadResult
     std::vector<std::uint8_t> data;
 };
 
-namespace detail {
-
-/// SM-aware transmit primitive for the reader: dispatch through @p activeChannel
-/// when it is open (the PACE SM tunnel is session-scoped, so MF/EF.CardAccess
-/// stays reachable over it), otherwise plain through @p conn.
-inline APDUResponse cardAccessDispatch(LibreSCRS::SecureChannel::ISecureChannel* activeChannel,
-                                       LibreSCRS::SmartCard::IConnection& conn, const APDUCommand& cmd,
-                                       LibreSCRS::CancelToken token)
-{
-    if (activeChannel != nullptr && activeChannel->state() == LibreSCRS::SecureChannel::ChannelState::Open)
-        return activeChannel->transmit(cmd, std::move(token));
-    return conn.transmit(cmd);
-}
-
-} // namespace detail
-
 /// @brief Read EF.CardAccess from the master file, reporting outcome detail.
 ///
 /// SELECT 3F00 -> SELECT 011C -> READ BINARY, each routed through
-/// @ref detail::cardAccessDispatch. @c noexcept: any throw collapses to a
-/// result with every flag false (an Unknown verdict downstream). Leaves the
+/// the shared dispatcher. @c noexcept: a reader failure is reported in
+/// @ref CardAccessReadResult::transportError, any throw collapses to a result
+/// with every flag false (an Unknown verdict downstream). Leaves the
 /// MF selected — every caller re-SELECTs its DF/AID afterwards.
 [[nodiscard]] inline CardAccessReadResult
 readCardAccessDetailed(LibreSCRS::SecureChannel::ISecureChannel* activeChannel, LibreSCRS::SmartCard::IConnection& conn,
@@ -97,16 +92,32 @@ readCardAccessDetailed(LibreSCRS::SecureChannel::ISecureChannel* activeChannel, 
 {
     CardAccessReadResult result;
     try {
-        auto mfSel = detail::cardAccessDispatch(activeChannel, conn, selectByFileId(0x3F, 0x00, 0x0C), token);
-        if (!mfSel.isSuccess())
-            mfSel = detail::cardAccessDispatch(activeChannel, conn, selectByFileId(0x3F, 0x00), token);
-        if (!mfSel.isSuccess())
+        const auto failed = [](TransportError error) {
+            CardAccessReadResult r;
+            r.transportError = std::move(error);
+            return r;
+        };
+        // One exchange through the session's dispatcher; when it is not
+        // answered with success, the same SELECT is sent once more without
+        // the FCI-suppressing P2 (some cards refuse 0x0C).
+        const auto selectWithRetry = [&](const APDUCommand& first,
+                                         const APDUCommand& second) -> std::expected<APDUResponse, TransportError> {
+            auto answer = dispatchCommand(activeChannel, conn, first, token);
+            if (answer && !answer->isSuccess())
+                answer = dispatchCommand(activeChannel, conn, second, token);
+            return answer;
+        };
+        auto mfSel = selectWithRetry(selectByFileId(0x3F, 0x00, 0x0C), selectByFileId(0x3F, 0x00));
+        if (!mfSel)
+            return failed(std::move(mfSel.error()));
+        if (!mfSel->isSuccess())
             return result; // mfSelected stays false -> Unknown downstream
         result.mfSelected = true;
 
-        auto efSel = detail::cardAccessDispatch(activeChannel, conn, selectByFileId(0x01, 0x1C, 0x0C), token);
-        if (!efSel.isSuccess())
-            efSel = detail::cardAccessDispatch(activeChannel, conn, selectByFileId(0x01, 0x1C), token);
+        auto efSelAnswer = selectWithRetry(selectByFileId(0x01, 0x1C, 0x0C), selectByFileId(0x01, 0x1C));
+        if (!efSelAnswer)
+            return failed(std::move(efSelAnswer.error()));
+        const auto& efSel = *efSelAnswer;
         // SW 6283 "selected file invalidated/deactivated" (ISO 7816-4) on the
         // FINAL selection attempt: the chip's own declaration that
         // EF.CardAccess is unusable — the second definitive signal. Return
@@ -126,10 +137,11 @@ readCardAccessDetailed(LibreSCRS::SecureChannel::ISecureChannel* activeChannel, 
             return result;
         }
 
-        auto read =
-            detail::cardAccessDispatch(activeChannel, conn, APDUCommand{0x00, 0xB0, 0x00, 0x00, {}, 0, true}, token);
-        result.readSucceeded = read.isSuccess();
-        result.data = std::move(read.data);
+        auto read = dispatchCommand(activeChannel, conn, APDUCommand{0x00, 0xB0, 0x00, 0x00, {}, 0, true}, token);
+        if (!read)
+            return failed(std::move(read.error()));
+        result.readSucceeded = read->isSuccess();
+        result.data = std::move(read->data);
         return result;
     } catch (...) {
         return CardAccessReadResult{};

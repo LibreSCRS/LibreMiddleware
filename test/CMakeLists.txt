@@ -10,6 +10,7 @@ add_executable(LibreMiddlewareTests
     smartcard_test.cpp
     eu_vrc_test.cpp
     healthcard_test.cpp
+    pcsc_classify_test.cpp
 )
 
 target_link_libraries(LibreMiddlewareTests
@@ -29,6 +30,7 @@ target_include_directories(LibreMiddlewareTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/eu-vrc/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/SmartCard
 )
 # LM-internal test: includes internal headers via lib/*/src/; advertise the
 # internal-build marker to satisfy the #error guard on those headers.
@@ -360,7 +362,7 @@ gtest_discover_tests(LibreSCRS_ChipAuthSessionTests)
 # accessor present, PCSCConnection::isTransactionHeld() visible. Behavioural
 # tests against a real reader live in the hardware suite.
 add_executable(LibreSCRS_CardTransactionTests LibreSCRS_CardTransactionTests.cpp)
-target_link_libraries(LibreSCRS_CardTransactionTests GTest::gtest_main SmartCard_Impl)
+target_link_libraries(LibreSCRS_CardTransactionTests GTest::gtest_main SmartCard_Impl LibreSCRS_SmartCard_RawDiagnostic)
 target_include_directories(LibreSCRS_CardTransactionTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)

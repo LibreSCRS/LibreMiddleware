@@ -5,6 +5,7 @@
 
 #include "apdu.h"
 #include <smartcard/i_connection.h>
+#include <smartcard/or_throw.h>
 
 #include <algorithm>
 #include <stdexcept>
@@ -60,7 +61,7 @@ std::vector<uint8_t> readChunkedFile(IConnection& conn, const ChunkedReadOptions
     if (!opts.headerOverride.empty()) {
         headerBytes = opts.headerOverride;
     } else if (headerSize > 0) {
-        auto headerResp = conn.transmit(readBinary(0, headerSize));
+        auto headerResp = orThrow(conn.transmit(readBinary(0, headerSize)));
         if (!headerResp.isSuccess() || headerResp.data.size() < headerSize) {
             throw std::runtime_error(opts.errorPrefix + ": cannot read file header");
         }
@@ -120,8 +121,9 @@ std::vector<uint8_t> readChunkedFile(IConnection& conn, const ChunkedReadOptions
             throw std::runtime_error(opts.errorPrefix + ": READ BINARY offset " + std::to_string(offset) +
                                      " is beyond what the card can be asked for");
 
-        APDUResponse readResp = opts.readChunk ? opts.readChunk(static_cast<uint16_t>(offset), thisChunk)
-                                               : conn.transmit(readBinary(static_cast<uint16_t>(offset), thisChunk));
+        APDUResponse readResp = opts.readChunk
+                                    ? opts.readChunk(static_cast<uint16_t>(offset), thisChunk)
+                                    : orThrow(conn.transmit(readBinary(static_cast<uint16_t>(offset), thisChunk)));
 
         if (!readResp.isSuccess()) {
             if (fallback != 0 && currentChunkSize != fallback) {

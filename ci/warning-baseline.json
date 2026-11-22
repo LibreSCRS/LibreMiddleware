@@ -4,8 +4,8 @@
     "project": {
       "-Wdangling-else": 12,
       "-Wfree-nonheap-object": 1,
-      "-Wstringop-overflow=": 9,
-      "-Wstringop-overread": 15
+      "-Wstringop-overflow=": 8,
+      "-Wstringop-overread": 14
     },
     "system": {},
     "system_reasons": {}

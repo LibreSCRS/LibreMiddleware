@@ -70,22 +70,16 @@ int tunnelTransmit(BridgeData& d, sc_apdu_t* apdu)
     }
 
     try {
-        const APDUResponse resp = d.channel->transmit(cmd, d.token);
+        auto answer = d.channel->transmit(cmd, d.token);
 
-        // SW passes through UNCHANGED — including 6987/6988 and a real
-        // card 6F00. Fatality is judged by channel STATE, never by SW
-        // pattern: only the channel sentinels 6F00 (closed) / 6F02
-        // (failed) — empty body — while the channel is no longer Open are
-        // a transport failure. 6F01 (cancel) is deliberately not handled
-        // here: cancel leaves the channel Open and the caller detects it
-        // via the operation token.
-        if (resp.data.empty() && resp.sw1 == 0x6F && (resp.sw2 == 0x00 || resp.sw2 == 0x02) &&
-            d.channel->state() != ChannelState::Open) {
-            LibreSCRS::Internal::warnNoexcept(
-                "OpenSC bridge: secure-channel sentinel SW=6F{:02X} with the channel no longer open; transmit failed",
-                resp.sw2);
+        // SW passes through UNCHANGED, including 6987/6988 and a real card
+        // 6F00. Every transport error is a failed transmit for OpenSC;
+        // cancellation is detected by the caller through the operation token.
+        if (!answer) {
+            LibreSCRS::Internal::warnNoexcept("OpenSC bridge: transmit failed: {}", answer.error().detail);
             return SC_ERROR_TRANSMIT_FAILED;
         }
+        const APDUResponse& resp = *answer;
 
         const size_t n = std::min(resp.data.size(), apdu->resplen);
         if (n > 0 && apdu->resp != nullptr)
@@ -174,8 +168,11 @@ int librescrs_opensc_bridge_transmit(sc_reader_t* reader, sc_apdu_t* apdu)
         }
     };
     try {
-        APDUResponse resp = d->conn->transmitRaw(std::span<const std::uint8_t>(sbuf, ssize));
+        auto answer = d->conn->transmitRaw(std::span<const std::uint8_t>(sbuf, ssize));
         releaseCommand();
+        if (!answer)
+            return SC_ERROR_TRANSMIT_FAILED;
+        APDUResponse& resp = *answer;
         const WipeOnExit wipeResponse{resp.data};
 
         // Reassemble the raw response buffer [body... SW1 SW2] for sc_apdu_set_resp.
@@ -203,12 +200,13 @@ int librescrs_opensc_bridge_lock(sc_reader_t* reader)
         // refcounted, so begin our own only when none is held — a nested
         // SCardBeginTransaction would unbalance the holder's.
         if (!d->conn->isTransactionHeld()) {
-            d->conn->beginTransaction();
+            if (!d->conn->beginTransaction())
+                return SC_ERROR_READER;
             d->ownsTransaction = true;
         }
         return SC_SUCCESS;
     } catch (...) {
-        return SC_ERROR_READER; // e.g. PCSCError from beginTransaction
+        return SC_ERROR_READER;
     }
 }
 

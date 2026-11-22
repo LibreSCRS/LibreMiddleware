@@ -256,8 +256,7 @@ TEST(PluginSigningKey, NeverPresentsThePinAgainAfterASessionLoss)
     // plugin's throw is contained at the plugin boundary.
     Rig r;
     r.plugin->respond = [](const SigningStubPlugin::SignCall&) -> SignResult {
-        throw LibreSCRS::SmartCard::Internal::PCSCError("card reset",
-                                                        static_cast<LONG>(0x80100068)); // SCARD_W_RESET_CARD
+        throw std::runtime_error("card reset"); // what a library raises for a reader failure
     };
 
     EXPECT_EQ(kindOf([&] { (void)r.key.sign(kDigestInfo, "SHA256withRSA", kMessage); }), SignFailureKind::CardError);

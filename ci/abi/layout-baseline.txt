@@ -222,6 +222,9 @@ LibreSCRS::SmartCard::OpenError	  +8     struct LibreSCRS::LocalizedText userMes
 LibreSCRS::SmartCard::OpenError	sizeof=112 align=8
 LibreSCRS::SmartCard::PaceRequest	  +0     LibreSCRS::Auth::PaceSecretKind secretKind
 LibreSCRS::SmartCard::PaceRequest	sizeof=1 align=1
+LibreSCRS::SmartCard::TransportError	  +0     Kind kind
+LibreSCRS::SmartCard::TransportError	  +8     class std::basic_string<char> detail
+LibreSCRS::SmartCard::TransportError	sizeof=40 align=8
 LibreSCRS::Trust::TrustAnchor	  +0     class std::vector<unsigned char> certificateDer
 LibreSCRS::Trust::TrustAnchor	sizeof=24 align=8
 LibreSCRS::Trust::TrustConfig	  +0     class std::vector<struct LibreSCRS::Trust::TrustedListSource> trustedListSources

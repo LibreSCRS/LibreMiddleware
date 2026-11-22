@@ -6,6 +6,7 @@
 #include "apdu.h"
 #include <smartcard/card_connection.h>
 #include <smartcard/chunked_read.h>
+#include <smartcard/or_throw.h>
 #include <stdexcept>
 
 namespace eidcard {
@@ -13,19 +14,22 @@ namespace eidcard {
 CardType CardReaderGemalto::selectApplication(LibreSCRS::SmartCard::CardConnection& conn)
 {
     // Try SERID (citizen ID) first
-    auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(protocol::AID_SERID));
+    auto resp = LibreSCRS::SmartCard::Internal::orThrow(
+        conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(protocol::AID_SERID)));
     if (resp.isSuccess()) {
         return CardType::Gemalto2014;
     }
 
     // Try SERIF (foreigner ID)
-    resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(protocol::AID_SERIF));
+    resp = LibreSCRS::SmartCard::Internal::orThrow(
+        conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(protocol::AID_SERIF)));
     if (resp.isSuccess()) {
         return CardType::ForeignerIF2020;
     }
 
     // Try SERRP (alternate AID for foreigner eID, same card family as SERIF)
-    resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(protocol::AID_SERRP));
+    resp = LibreSCRS::SmartCard::Internal::orThrow(
+        conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(protocol::AID_SERRP)));
     if (resp.isSuccess()) {
         return CardType::ForeignerIF2020;
     }
@@ -40,30 +44,36 @@ namespace {
 LibreSCRS::SmartCard::Internal::APDUResponse selectAndReadHeader(LibreSCRS::SmartCard::CardConnection& conn,
                                                                  uint8_t fileId1, uint8_t fileId2)
 {
-    auto selectResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(fileId1, fileId2, 4));
+    auto selectResp = LibreSCRS::SmartCard::Internal::orThrow(
+        conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(fileId1, fileId2, 4)));
     if (selectResp.isSuccess()) {
-        auto headerResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 4));
+        auto headerResp =
+            LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 4)));
         if (headerResp.isSuccess() && headerResp.data.size() >= 4)
             return headerResp;
     }
 
     // Retry: re-select application (context may have been lost)
     CardReaderGemalto::selectApplication(conn);
-    selectResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(fileId1, fileId2, 4));
+    selectResp = LibreSCRS::SmartCard::Internal::orThrow(
+        conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(fileId1, fileId2, 4)));
     if (selectResp.isSuccess()) {
-        auto headerResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 4));
+        auto headerResp =
+            LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 4)));
         if (headerResp.isSuccess() && headerResp.data.size() >= 4)
             return headerResp;
     }
 
     // Last resort: reconnect to the card and try once more
-    conn.reconnect();
+    LibreSCRS::SmartCard::Internal::orThrow(conn.reconnect());
     CardReaderGemalto::selectApplication(conn);
-    selectResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(fileId1, fileId2, 4));
+    selectResp = LibreSCRS::SmartCard::Internal::orThrow(
+        conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(fileId1, fileId2, 4)));
     if (!selectResp.isSuccess()) {
         throw std::runtime_error("Gemalto: SELECT file failed, SW=" + std::to_string(selectResp.statusWord()));
     }
-    auto headerResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 4));
+    auto headerResp =
+        LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 4)));
     if (!headerResp.isSuccess() || headerResp.data.size() < 4) {
         throw std::runtime_error("Gemalto: Cannot read file header");
     }
@@ -75,22 +85,27 @@ LibreSCRS::SmartCard::Internal::APDUResponse readBinaryWithRetry(LibreSCRS::Smar
                                                                  uint16_t offset, uint8_t length, uint8_t fileId1,
                                                                  uint8_t fileId2)
 {
-    auto readResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(offset, length));
+    auto readResp = LibreSCRS::SmartCard::Internal::orThrow(
+        conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(offset, length)));
     if (readResp.isSuccess())
         return readResp;
 
     // Retry 1: re-select application + file, then read
     CardReaderGemalto::selectApplication(conn);
-    conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(fileId1, fileId2, 4));
-    readResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(offset, length));
+    static_cast<void>(LibreSCRS::SmartCard::Internal::orThrow(
+        conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(fileId1, fileId2, 4))));
+    readResp = LibreSCRS::SmartCard::Internal::orThrow(
+        conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(offset, length)));
     if (readResp.isSuccess())
         return readResp;
 
     // Retry 2: reconnect + re-select application + file, then read
-    conn.reconnect();
+    LibreSCRS::SmartCard::Internal::orThrow(conn.reconnect());
     CardReaderGemalto::selectApplication(conn);
-    conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(fileId1, fileId2, 4));
-    readResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(offset, length));
+    static_cast<void>(LibreSCRS::SmartCard::Internal::orThrow(
+        conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(fileId1, fileId2, 4))));
+    readResp = LibreSCRS::SmartCard::Internal::orThrow(
+        conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(offset, length)));
     return readResp;
 }
 

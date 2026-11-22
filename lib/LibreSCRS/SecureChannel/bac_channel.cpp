@@ -9,8 +9,11 @@
 #include "smartcard/secure_buffer.h"
 
 #include <LibreSCRS/Secure/Buffer.h>
+#include <LibreSCRS_internal/SmartCard/ActivationError.h>
 
 #include <cstdint>
+#include <expected>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -34,7 +37,7 @@ ChannelState BacChannel::state() const noexcept
     return pImpl->state();
 }
 
-LibreSCRS::SmartCard::Internal::APDUResponse
+std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError>
 BacChannel::transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token)
 {
     return pImpl->transmit(cmd, std::move(token));
@@ -64,7 +67,8 @@ BacChannel::establish(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::
             return std::unexpected{ChannelActivationError::Cancelled};
         }
 
-        std::optional<emrtd::crypto::SessionKeys> derived;
+        std::expected<std::optional<emrtd::crypto::SessionKeys>, LibreSCRS::SmartCard::TransportError> derived{
+            std::nullopt};
         try {
             // emrtd::crypto::deriveBACKeys takes const std::string& —
             // materialise scrubbed scratch copies from the Secure::String
@@ -83,6 +87,10 @@ BacChannel::establish(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::
         }
 
         if (!derived.has_value()) {
+            return std::unexpected{LibreSCRS::SmartCard::Internal::activationErrorFor(
+                derived.error(), LibreSCRS::SmartCard::Internal::ActivationStep::Other)};
+        }
+        if (!derived->has_value()) {
             // BAC mutual-auth failure (wrong MRZ or card-side rejection) maps to
             // the protocol-neutral PaceWrongSecret category (the "Pace" prefix is
             // a misnomer for BAC) — the retry semantics are the same as the PACE
@@ -94,9 +102,9 @@ BacChannel::establish(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::
         // Buffer copies through its cleansing allocator; the source
         // emrtd::crypto::SessionKeys vectors are cleansed by their own
         // destructor when `derived` drops at end-of-scope.
-        publicKeys.encKey = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{derived->encKey}};
-        publicKeys.macKey = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{derived->macKey}};
-        publicKeys.ssc = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{derived->ssc}};
+        publicKeys.encKey = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{(*derived)->encKey}};
+        publicKeys.macKey = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{(*derived)->macKey}};
+        publicKeys.ssc = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{(*derived)->ssc}};
         publicKeys.cipher = SmCipher::Des3;
 
         return std::make_unique<BacChannel>(connection, std::move(appletAid), std::move(publicKeys));

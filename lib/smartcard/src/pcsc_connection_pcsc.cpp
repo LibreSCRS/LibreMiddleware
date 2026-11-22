@@ -6,6 +6,7 @@
 // diagnostic opener stay in pcsc_connection.cpp.
 
 #include "pcsc_connection.h"
+#include "pcsc_classify.h"
 #include "pcsc_trace.h"
 #include <smartcard/secure_wipe.h>
 
@@ -23,11 +24,15 @@ namespace LibreSCRS::SmartCard::Internal {
 
 using namespace detail;
 
-PCSCConnection::PCSCConnection(const std::string& readerName) : storedReaderName(readerName)
+PCSCConnection::PCSCConnection(const std::string& readerName) : storedReaderName(readerName) {}
+
+std::expected<void, TransportError> PCSCConnection::connect()
 {
+    const std::string& readerName = storedReaderName;
     LONG rv = SCardEstablishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &context);
     if (rv != SCARD_S_SUCCESS) {
-        throw PCSCError("SCardEstablishContext failed", rv);
+        context = 0;
+        return std::unexpected(pcscFailure(rv, "SCardEstablishContext failed"));
     }
 
     // Prefer T=1: natively supports arbitrary-length APDUs (no 255-byte Lc limit).
@@ -38,7 +43,9 @@ PCSCConnection::PCSCConnection(const std::string& readerName) : storedReaderName
     }
     if (rv != SCARD_S_SUCCESS) {
         SCardReleaseContext(context);
-        throw PCSCError("SCardConnect failed on reader: " + readerName, rv);
+        context = 0;
+        card = 0;
+        return std::unexpected(pcscFailure(rv, "SCardConnect failed on reader: " + readerName));
     }
 
     // One event per handle, emitted after the protocol fallback has settled:
@@ -49,6 +56,7 @@ PCSCConnection::PCSCConnection(const std::string& readerName) : storedReaderName
     if (pcscTraceEnabled()) {
         emitPcscTraceEvent("connect", readerName, this);
     }
+    return {};
 }
 
 PCSCConnection::~PCSCConnection()
@@ -61,7 +69,7 @@ PCSCConnection::~PCSCConnection()
     }
 }
 
-void PCSCConnection::reconnect()
+std::expected<void, TransportError> PCSCConnection::reconnect()
 {
     if (pcscTraceEnabled()) {
         // Lifecycle event — no APDU. Captured stack frame pinpoints
@@ -78,11 +86,12 @@ void PCSCConnection::reconnect()
         rv = SCardReconnect(card, SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0, SCARD_LEAVE_CARD, &activeProtocol);
     }
     if (rv != SCARD_S_SUCCESS) {
-        throw PCSCError("SCardReconnect failed", rv);
+        return std::unexpected(pcscFailure(rv, "SCardReconnect failed"));
     }
+    return {};
 }
 
-void PCSCConnection::reconnectWithReset()
+std::expected<void, TransportError> PCSCConnection::reconnectWithReset()
 {
     if (pcscTraceEnabled()) {
         emitPcscTraceEvent("reconnect-reset", readerName(), this);
@@ -93,8 +102,9 @@ void PCSCConnection::reconnectWithReset()
         rv = SCardReconnect(card, SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0, SCARD_RESET_CARD, &activeProtocol);
     }
     if (rv != SCARD_S_SUCCESS) {
-        throw PCSCError("SCardReconnect (reset) failed", rv);
+        return std::unexpected(pcscFailure(rv, "SCardReconnect (reset) failed"));
     }
+    return {};
 }
 
 bool PCSCConnection::detached() const noexcept
@@ -102,7 +112,8 @@ bool PCSCConnection::detached() const noexcept
     return card == 0;
 }
 
-std::optional<std::vector<std::uint8_t>> PCSCConnection::exchangeWire(std::span<const std::uint8_t> command)
+std::expected<std::vector<std::uint8_t>, TransportError>
+PCSCConnection::exchangeWire(std::span<const std::uint8_t> command)
 {
     const auto* cmdBytes = command.data();
     const auto cmdLen = static_cast<DWORD>(command.size());
@@ -118,13 +129,13 @@ std::optional<std::vector<std::uint8_t>> PCSCConnection::exchangeWire(std::span<
         // Card was reset (e.g. hot-swap or external reset).
         if (pcscTraceEnabled())
             emitPcscTraceLine("[PCSC_TRACE] SCardTransmit: card was reset");
-        return std::nullopt;
+        return std::unexpected(pcscFailure(rv, "SCardTransmit failed"));
     }
     if (rv != SCARD_S_SUCCESS) {
         if (pcscTraceEnabled())
             emitPcscTraceLine(
                 std::format("[PCSC_TRACE] SCardTransmit failed rv=0x{:08X}", static_cast<std::uint32_t>(rv)));
-        throw PCSCError("SCardTransmit failed", rv);
+        return std::unexpected(pcscFailure(rv, "SCardTransmit failed"));
     }
 
     std::vector<std::uint8_t> reply(recvBuffer.begin(), recvBuffer.begin() + static_cast<ptrdiff_t>(recvLength));
@@ -134,18 +145,21 @@ std::optional<std::vector<std::uint8_t>> PCSCConnection::exchangeWire(std::span<
     return reply;
 }
 
-void PCSCConnection::beginOnCard()
+std::expected<void, TransportError> PCSCConnection::beginOnCard()
 {
     LONG rv = SCardBeginTransaction(card);
     if (rv == static_cast<LONG>(SCARD_W_RESET_CARD)) {
         // Card was reset externally (reader firmware, or prior SCARD_RESET_CARD by another
         // process). Re-establish our handle without resetting the card (SCARD_LEAVE_CARD),
         // then retry. The caller's subsequent applet SELECT restores card context.
-        reconnect(); // SCARD_LEAVE_CARD — safe for other SCARD_SHARE_SHARED connections
+        if (auto reconnected = reconnect();
+            !reconnected) // SCARD_LEAVE_CARD — safe for other SCARD_SHARE_SHARED connections
+            return reconnected;
         rv = SCardBeginTransaction(card);
     }
     if (rv != SCARD_S_SUCCESS)
-        throw PCSCError("SCardBeginTransaction failed", rv);
+        return std::unexpected(pcscFailure(rv, "SCardBeginTransaction failed"));
+    return {};
 }
 
 void PCSCConnection::endOnCard() noexcept
@@ -153,7 +167,7 @@ void PCSCConnection::endOnCard() noexcept
     SCardEndTransaction(card, SCARD_LEAVE_CARD);
 }
 
-std::vector<uint8_t> PCSCConnection::atrFromCard() const
+std::expected<std::vector<uint8_t>, TransportError> PCSCConnection::atrFromCard() const
 {
     // A detached connection (card == 0) gets here too and fails in
     // SCardStatus, as it always has.
@@ -165,7 +179,7 @@ std::vector<uint8_t> PCSCConnection::atrFromCard() const
 
     LONG rv = SCardStatus(card, nullptr, &readerLen, &state, &protocol, atr, &atrLen);
     if (rv != SCARD_S_SUCCESS) {
-        throw PCSCError("SCardStatus failed", rv);
+        return std::unexpected(pcscFailure(rv, "SCardStatus failed"));
     }
 
     return std::vector<uint8_t>(atr, atr + atrLen);
@@ -184,9 +198,9 @@ namespace {
 class PCSCContextHandle
 {
 public:
-    PCSCContextHandle() noexcept : context{}, established{false}
+    PCSCContextHandle() noexcept : context{}, established{false}, rv{SCARD_S_SUCCESS}
     {
-        const LONG rv = SCardEstablishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &context);
+        rv = SCardEstablishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &context);
         established = (rv == SCARD_S_SUCCESS);
     }
 
@@ -207,6 +221,11 @@ public:
         return established;
     }
 
+    [[nodiscard]] LONG status() const noexcept
+    {
+        return rv;
+    }
+
     [[nodiscard]] SCARDCONTEXT get() const noexcept
     {
         return context;
@@ -215,28 +234,34 @@ public:
 private:
     SCARDCONTEXT context;
     bool established;
+    LONG rv;
 };
 
 } // namespace
 
-std::vector<std::string> PCSCConnection::listReaders()
+std::expected<std::vector<std::string>, TransportError> PCSCConnection::listReaders()
 {
     PCSCContextHandle ctx;
     if (!ctx.ok())
-        return {};
+        return std::unexpected(pcscFailure(ctx.status(), "SCardEstablishContext failed"));
 
     DWORD readersLen = 0;
     LONG rv = SCardListReaders(ctx.get(), nullptr, nullptr, &readersLen);
+    // No reader attached is an empty list, not a failure.
+    if (static_cast<std::uint32_t>(rv) == static_cast<std::uint32_t>(SCARD_E_NO_READERS_AVAILABLE))
+        return std::vector<std::string>{};
     if (rv != SCARD_S_SUCCESS)
-        return {};
+        return std::unexpected(pcscFailure(rv, "SCardListReaders failed"));
 
     // vector<char> buffer(readersLen) may throw std::bad_alloc on a card
     // with a multi-string-larger-than-available-memory; PCSCContextHandle's
     // dtor handles SCardReleaseContext on unwind.
     std::vector<char> buffer(readersLen);
     rv = SCardListReaders(ctx.get(), nullptr, buffer.data(), &readersLen);
+    if (static_cast<std::uint32_t>(rv) == static_cast<std::uint32_t>(SCARD_E_NO_READERS_AVAILABLE))
+        return std::vector<std::string>{};
     if (rv != SCARD_S_SUCCESS)
-        return {};
+        return std::unexpected(pcscFailure(rv, "SCardListReaders failed"));
 
     // Parse multi-string (null-separated, double-null terminated)
     std::vector<std::string> readers;

@@ -90,7 +90,10 @@ std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid, bool skipS
         // P2=0x0C (no response) would be Case 3 (no Le, no DO'97) → rejected with 6988.
         LibreSCRS::SmartCard::Internal::APDUCommand selectCmd{
             0x00, 0xA4, 0x02, 0x04, {static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF)}, 0, true};
-        auto selectResp = channel.transmit(selectCmd, LibreSCRS::CancelToken{});
+        auto selectAnswer = channel.transmit(selectCmd, LibreSCRS::CancelToken{});
+        if (!selectAnswer)
+            return std::nullopt;
+        const auto& selectResp = *selectAnswer;
         // A failed SELECT leaves the PREVIOUS file current on many card OSes
         // — reading on would return the wrong file's bytes (e.g. a 6982 on
         // EF.SOD after a successful EF.COM read would re-read EF.COM and
@@ -109,7 +112,10 @@ std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid, bool skipS
     while (true) {
         const std::size_t offset = fileData.size();
         const bool beyondShortOffset = offset > kMaxShortReadOffset;
-        auto resp = channel.transmit(readBinaryAt(offset), LibreSCRS::CancelToken{});
+        auto answer = channel.transmit(readBinaryAt(offset), LibreSCRS::CancelToken{});
+        if (!answer)
+            return std::nullopt;
+        auto& resp = *answer;
         const bool endOfFile = resp.statusWord() == 0x6282;
         if (!resp.isSuccess() && !endOfFile)
             return std::nullopt;
@@ -229,7 +235,10 @@ DGReadResult EMRTDCard::readDataGroupSafe(int dgNumber)
     // PACE-family eIDs in CA-derived SM mode (e.g. rejects P2=0x0C with 6988).
     LibreSCRS::SmartCard::Internal::APDUCommand selectCmd{
         0x00, 0xA4, 0x02, 0x04, {static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF)}, 0, true};
-    auto selectResp = channel.transmit(selectCmd, LibreSCRS::CancelToken{});
+    auto selectAnswer = channel.transmit(selectCmd, LibreSCRS::CancelToken{});
+    if (!selectAnswer)
+        return {DGReadStatus::ERROR, {}};
+    const auto& selectResp = *selectAnswer;
     uint16_t sw = selectResp.statusWord();
 
     // Access denied (security status not satisfied / command not allowed)

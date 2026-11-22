@@ -213,10 +213,12 @@ protected:
 > reaches the card:
 >
 > - `CardSession::transmit` sends a command through the session's
->   secure-messaging channel when one is open, refuses (`6F02`) when a
->   secure-messaging channel has failed, and sends it plain otherwise;
+>   secure-messaging channel when one is open, answers
+>   `TransportError::Kind::ChannelUnusable` when a secure-messaging channel
+>   has failed, and sends it plain otherwise;
 > - `CardSession::transmitRaw` sends bytes as given, in one exchange, and
->   refuses (`6F02`, nothing sent) while a secure-messaging channel is live;
+>   answers `TransportError::Kind::SecureChannelActive` (nothing sent) while
+>   a secure-messaging channel is live;
 > - `beginTransaction` / `endTransaction` / `isTransactionHeld`,
 >   `reconnect`, `channelState`, `carriesSecureMessaging` and
 >   `forgetCurrentApplet` cover the rest.

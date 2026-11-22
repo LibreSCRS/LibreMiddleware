@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
+#include <smartcard/or_throw.h>
 #include "active_auth.h"
 
 #include "tlv_bounds.h"
@@ -132,7 +133,7 @@ ChipAuthResult performActiveAuth(LibreSCRS::SecureChannel::ISecureChannel& chann
     // --- Send INTERNAL AUTHENTICATE via Secure Messaging ---
     // Command: 00 88 00 00 08 <challenge> 00
     LibreSCRS::SmartCard::Internal::APDUCommand iaCmd{0x00, 0x88, 0x00, 0x00, challenge, 0x00, true};
-    auto iaResp = channel.transmit(iaCmd, token);
+    auto iaResp = LibreSCRS::SmartCard::Internal::orThrow(channel.transmit(iaCmd, token));
 
     if (iaResp.sw1 != 0x90 && iaResp.sw1 != 0x62) {
         // Card-side SW refusal of INTERNAL AUTHENTICATE (e.g. protocol not

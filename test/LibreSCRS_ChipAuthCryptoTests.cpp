@@ -77,6 +77,38 @@ TEST(ChipAuthCryptoTest, MseRefusalIsMarkedAsProtocolRefusal)
     EXPECT_TRUE(result.chipRefusedProtocol);
 }
 
+TEST(ChipAuthCryptoTest, AConnectionFailureOnMseCarriesTheTransportError)
+{
+    auto key = EcCardKey::generate();
+    const auto dg14 = buildDg14(key.spkiDer);
+
+    EcdhCaCardChannel card{key, emrtdAid()};
+    card.failIns(0x22, LibreSCRS::SmartCard::TransportError{LibreSCRS::SmartCard::TransportError::Kind::NoCardPresent,
+                                                            "SCardTransmit failed"});
+
+    auto result = emrtd::crypto::performChipAuth(card, dg14, LibreSCRS::CancelToken{});
+    EXPECT_EQ(result.chipAuthentication, emrtd::crypto::ChipAuthResult::FAILED);
+    ASSERT_TRUE(result.transportError.has_value());
+    EXPECT_EQ(result.transportError->kind, LibreSCRS::SmartCard::TransportError::Kind::NoCardPresent);
+    EXPECT_FALSE(result.chipRefusedProtocol);
+}
+
+TEST(ChipAuthCryptoTest, AConnectionFailureOnGeneralAuthenticateCarriesTheTransportError)
+{
+    auto key = EcCardKey::generate();
+    const auto dg14 = buildDg14(key.spkiDer);
+
+    EcdhCaCardChannel card{key, emrtdAid()};
+    card.failIns(0x86, LibreSCRS::SmartCard::TransportError{LibreSCRS::SmartCard::TransportError::Kind::CardReset,
+                                                            "SCardTransmit failed"});
+
+    auto result = emrtd::crypto::performChipAuth(card, dg14, LibreSCRS::CancelToken{});
+    EXPECT_EQ(result.chipAuthentication, emrtd::crypto::ChipAuthResult::FAILED);
+    ASSERT_TRUE(result.transportError.has_value());
+    EXPECT_EQ(result.transportError->kind, LibreSCRS::SmartCard::TransportError::Kind::CardReset);
+    EXPECT_FALSE(result.chipRefusedProtocol);
+}
+
 TEST(ChipAuthCryptoTest, ActiveAuthInternalAuthRefusalSetsFlag)
 {
     auto key = EcCardKey::generate();
@@ -111,10 +143,10 @@ TEST(ChipAuthCryptoTest, ActiveAuthEmptyResponseIsFailureNotRefusal)
         {
             return LibreSCRS::SecureChannel::ChannelState::Open;
         }
-        LibreSCRS::SmartCard::Internal::APDUResponse
+        std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError>
         transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& /*cmd*/, LibreSCRS::CancelToken) override
         {
-            return {{}, 0x90, 0x00}; // success SW, empty data
+            return LibreSCRS::SmartCard::Internal::APDUResponse{{}, 0x90, 0x00}; // success SW, empty data
         }
         void close() override {}
         void setCurrentApplet(AppletAid a) noexcept override
@@ -148,8 +180,9 @@ TEST(ChipAuthEstablishTest, SucceedsAndProofExchangePassesWithHonestChip)
     card.smOracle()->setNextResponseData({0xAA, 0xBB});
     LibreSCRS::SmartCard::Internal::APDUCommand read{0x00, 0xB0, 0x00, 0x00, {}, 0x00, true};
     auto resp = (*result)->transmit(read, LibreSCRS::CancelToken{});
-    EXPECT_TRUE(resp.isSuccess());
-    EXPECT_EQ(resp.data, (std::vector<std::uint8_t>{0xAA, 0xBB}));
+    ASSERT_TRUE(resp.has_value());
+    EXPECT_TRUE(resp->isSuccess());
+    EXPECT_EQ(resp->data, (std::vector<std::uint8_t>{0xAA, 0xBB}));
 }
 
 TEST(ChipAuthEstablishTest, CloneChipFailsTheProofExchange)

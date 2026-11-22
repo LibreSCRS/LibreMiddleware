@@ -9,9 +9,9 @@
 ///      through the channel (wrapped), not through the underlying PC/SC
 ///      connection.
 ///   2. No channel installed against a detached session — funnel routes
-///      through the (absent) PC/SC connection and returns SW=6F00 via the
-///      null-conn guard rather than attempting a wire transmit.
-///   3. Moved-from @ref CardSession — funnel returns SW=6F00 without
+///      through the (absent) PC/SC connection and returns a TransportError
+///      rather than attempting a wire transmit.
+///   3. Moved-from @ref CardSession — funnel returns a TransportError without
 ///      attempting a transmit, matching the documented null-pimpl
 ///      observation surface.
 ///   4. Channel reset mid-call — the snapshot @c shared_ptr keeps the
@@ -37,7 +37,10 @@
 
 #include <gtest/gtest.h>
 
+#include <expected>
+#include <span>
 #include <thread>
+#include <vector>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -80,17 +83,18 @@ TEST_F(SessionTransmitTest, routesThroughSmWhenChannelLive)
     ChannelInjector::installForTesting(*session, std::move(channel));
 
     auto resp = LibreSCRS::SmartCard::SessionConnection::toResponse(session->transmit(makeProbeCommand().toBytes()));
+    ASSERT_TRUE(resp);
 
     EXPECT_EQ(observer->lastWrappedCommand().ins, 0xA4);
     EXPECT_EQ(observer->transmits(), 1);
-    EXPECT_EQ(resp.sw1, 0x90);
-    EXPECT_EQ(resp.sw2, 0x00);
+    EXPECT_EQ(resp->sw1, 0x90);
+    EXPECT_EQ(resp->sw2, 0x00);
 }
 
 // A secure-messaging channel that is no longer open -- closed by a reset,
 // failed on a bad MAC -- is never bypassed by the operation running over it:
 // that operation meant its commands to be protected. The funnel answers the
-// channel-failed sentinel and sends nothing.
+// channel-unusable error and sends nothing.
 TEST_F(SessionTransmitTest, smChannelThatIsNotOpenIsNeverBypassed)
 {
     AppletAid aid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
@@ -112,15 +116,16 @@ TEST_F(SessionTransmitTest, smChannelThatIsNotOpenIsNeverBypassed)
 
         auto resp =
             LibreSCRS::SmartCard::SessionConnection::toResponse(session->transmit(makeProbeCommand().toBytes()));
+        ASSERT_FALSE(resp);
         EXPECT_EQ(observer->transmits(), 0);
         EXPECT_EQ(wireCommands, 0U) << "no plain command reaches the card";
-        EXPECT_EQ(resp.sw1, 0x6F);
-        EXPECT_EQ(resp.sw2, 0x02);
+        EXPECT_EQ(resp.error().kind, LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable);
     }
 }
 
-// A plain channel that is not open is just no channel: the connection answers.
-TEST_F(SessionTransmitTest, returnsSw6F00OnClosedPlainChannel)
+// A plain channel that is not open refuses the command like any installed
+// channel: it never falls back to the connection.
+TEST_F(SessionTransmitTest, aPlainChannelThatIsNotOpenIsUnusable)
 {
     AppletAid aid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
     auto channel = std::make_unique<FakeChannel>(aid, ChannelState::Closed, /*carriesSm=*/false);
@@ -133,10 +138,43 @@ TEST_F(SessionTransmitTest, returnsSw6F00OnClosedPlainChannel)
     });
 
     auto resp = LibreSCRS::SmartCard::SessionConnection::toResponse(session->transmit(makeProbeCommand().toBytes()));
+    ASSERT_FALSE(resp);
     EXPECT_EQ(observer->transmits(), 0);
-    EXPECT_EQ(wireCommands, 1U) << "the connection answers";
-    EXPECT_EQ(resp.sw1, 0x6F);
-    EXPECT_EQ(resp.sw2, 0x00);
+    EXPECT_EQ(wireCommands, 0U) << "nothing is sent";
+    EXPECT_EQ(resp.error().kind, LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable);
+}
+
+// The token is checked before the first command on every path: with no
+// channel, under a plain one and under secure messaging, a fired token is
+// Cancelled and nothing reaches the channel or the wire.
+TEST_F(SessionTransmitTest, aCancelledTokenSendsNothingOnEveryPath)
+{
+    AppletAid aid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
+    LibreSCRS::CancelSource source;
+    source.requestCancel();
+    for (const auto path : {0, 1, 2}) {
+        SCOPED_TRACE(path);
+        FakeChannel* observer = nullptr;
+        if (path != 0) {
+            auto channel = std::make_unique<FakeChannel>(aid, ChannelState::Open, /*carriesSm=*/path == 2);
+            observer = channel.get();
+            ChannelInjector::installForTesting(*session, std::move(channel));
+        }
+        std::size_t wireCommands = 0;
+        LibreSCRS::SmartCard::Internal::connectionOf(*session).setTransmitFilter([&](const APDUCommand&) {
+            ++wireCommands;
+            return APDUResponse{{}, 0x90, 0x00};
+        });
+
+        auto resp = session->transmit(makeProbeCommand().toBytes(), source.token());
+        ASSERT_FALSE(resp);
+        EXPECT_EQ(resp.error().kind, LibreSCRS::SmartCard::TransportError::Kind::Cancelled);
+        EXPECT_EQ(wireCommands, 0U);
+        if (observer != nullptr) {
+            EXPECT_EQ(observer->transmits(), 0);
+        }
+        session->clearActiveChannel();
+    }
 }
 
 TEST_F(SessionTransmitTest, channelResetMidSnapshotKeepsChannelAlive)
@@ -159,13 +197,14 @@ TEST_F(SessionTransmitTest, channelResetMidSnapshotKeepsChannelAlive)
     ChannelInjector::installForTesting(*session, std::move(channel));
 
     auto resp = LibreSCRS::SmartCard::SessionConnection::toResponse(session->transmit(makeProbeCommand().toBytes()));
+    ASSERT_TRUE(resp);
     teardown.join();
 
     EXPECT_EQ(observedIns, 0xA4);
     EXPECT_TRUE(lockedOnTheWire) << "the command went out without the session lock";
     EXPECT_FALSE(session->channelState().has_value()) << "the teardown ran after the command";
-    EXPECT_EQ(resp.sw1, 0x90);
-    EXPECT_EQ(resp.sw2, 0x00);
+    EXPECT_EQ(resp->sw1, 0x90);
+    EXPECT_EQ(resp->sw2, 0x00);
 }
 
 TEST_F(SessionTransmitTest, singleTransmitContractIsCallerObligation)
@@ -179,3 +218,36 @@ TEST_F(SessionTransmitTest, singleTransmitContractIsCallerObligation)
 }
 
 } // namespace
+
+// A command the byte interface does not accept is an InvalidCommand error and
+// nothing reaches the wire.
+TEST_F(SessionTransmitTest, AMalformedApduIsInvalidCommandAndSendsNothing)
+{
+    std::size_t wireCommands = 0;
+    LibreSCRS::SmartCard::Internal::connectionOf(*session).setDetachedRawResponder([&](std::span<const std::uint8_t>) {
+        ++wireCommands;
+        return APDUResponse{{}, 0x90, 0x00};
+    });
+    const std::vector<std::uint8_t> malformed{0x00, 0xA4, 0x04};
+
+    const auto r = session->transmit(malformed);
+
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().kind, LibreSCRS::SmartCard::TransportError::Kind::InvalidCommand);
+    EXPECT_EQ(wireCommands, 0U);
+}
+
+// The reader's failure reaches the caller as the error it classified to.
+TEST_F(SessionTransmitTest, AReaderFailureOnThePlainPathIsTheError)
+{
+    LibreSCRS::SmartCard::Internal::connectionOf(*session).setDetachedRawResponder(
+        [](std::span<const std::uint8_t>) -> std::expected<APDUResponse, LibreSCRS::SmartCard::TransportError> {
+            return std::unexpected(LibreSCRS::SmartCard::TransportError{
+                LibreSCRS::SmartCard::TransportError::Kind::NoCardPresent, "card removed"});
+        });
+
+    const auto r = session->transmit(makeProbeCommand().toBytes());
+
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().kind, LibreSCRS::SmartCard::TransportError::Kind::NoCardPresent);
+}

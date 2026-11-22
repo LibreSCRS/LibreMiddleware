@@ -29,6 +29,7 @@ using LibreSCRS::SecureChannel::ChipAuthChannel;
 using LibreSCRS::SecureChannel::confirmSmAfterKeyChange;
 using LibreSCRS::SecureChannel::SessionKeys;
 using LibreSCRS::SecureChannel::SmCipher;
+using LibreSCRS::SecureChannel::SmKeyProof;
 using LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection;
 using LibreSCRS::SmartCard::AppletAid;
 using LibreSCRS::Test::AesSmCardOracle;
@@ -86,7 +87,7 @@ TEST(ChipAuthChannelTest, ProofExchangeSucceedsWhenKeysMatch)
 
     ChipAuthChannel ch{conn, makeEmrtdAid(), makeAesKeys()};
     const auto proof = confirmSmAfterKeyChange(ch, makeEmrtdAid(), CancelToken{});
-    EXPECT_TRUE(proof.proven);
+    EXPECT_EQ(proof.outcome, SmKeyProof::Outcome::Proven);
     EXPECT_TRUE(proof.appletSelected);
     EXPECT_EQ(oracle->verifiedCommands(), 1); // the card really verified our MAC
 }
@@ -100,7 +101,7 @@ TEST(ChipAuthChannelTest, ProofExchangeFailsWhenCardKeysDiffer)
     installOracle(conn, oracle);
 
     ChipAuthChannel ch{conn, makeEmrtdAid(), makeAesKeys()};
-    EXPECT_FALSE(confirmSmAfterKeyChange(ch, makeEmrtdAid(), CancelToken{}).proven);
+    EXPECT_EQ(confirmSmAfterKeyChange(ch, makeEmrtdAid(), CancelToken{}).outcome, SmKeyProof::Outcome::NotProven);
     EXPECT_EQ(oracle->verifiedCommands(), 0);
     EXPECT_EQ(ch.state(), ChannelState::Failed); // 6988 tore the channel down
 }
@@ -118,7 +119,8 @@ TEST(ChipAuthChannelTest, DataRoundTripDecryptsCardResponse)
     // response leg on top of the command MAC on the way in.
     LibreSCRS::SmartCard::Internal::APDUCommand read{0x00, 0xB0, 0x00, 0x00, {}, 0x00, true};
     auto resp = ch.transmit(read, CancelToken{});
-    EXPECT_EQ(resp.sw1, 0x90);
-    EXPECT_EQ(resp.sw2, 0x00);
-    EXPECT_EQ(resp.data, payload);
+    ASSERT_TRUE(resp.has_value());
+    EXPECT_EQ(resp->sw1, 0x90);
+    EXPECT_EQ(resp->sw2, 0x00);
+    EXPECT_EQ(resp->data, payload);
 }

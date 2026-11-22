@@ -100,6 +100,14 @@ private:
 class CardSessionByteTransportTest : public ::testing::Test
 {
 protected:
+    // The call was refused with @p kind, so nothing was sent.
+    static void expectRefused(const std::expected<Bytes, LibreSCRS::SmartCard::TransportError>& r,
+                              LibreSCRS::SmartCard::TransportError::Kind kind)
+    {
+        ASSERT_FALSE(r.has_value());
+        EXPECT_EQ(r.error().kind, kind);
+    }
+
     void SetUp() override
     {
         session = SessionAccess::detached("byte-transport-reader");
@@ -195,8 +203,8 @@ TEST_F(CardSessionByteTransportTest, AClosedTunnelRefusesWithoutSending)
         ASSERT_TRUE(holder.has_value());
         channel->setState(state);
 
-        EXPECT_EQ(session->transmit(kSelect), (Bytes{0x6F, 0x02}));
-        EXPECT_EQ(session->transmitRaw(kSelect), (Bytes{0x6F, 0x02}));
+        expectRefused(session->transmit(kSelect), LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable);
+        expectRefused(session->transmitRaw(kSelect), LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable);
         EXPECT_EQ(channel->transmits(), 0);
         EXPECT_TRUE(plainCommands.empty()) << "no plain command reaches the card";
         EXPECT_TRUE(rawCommands.empty());
@@ -213,9 +221,9 @@ TEST_F(CardSessionByteTransportTest, ADeadTunnelRefusesEveryCommandOnEveryThread
         rawCommands.clear();
         install(state, /*carriesSm=*/true, SmProtocolRequest{PaceRequest{}});
 
-        EXPECT_EQ(session->transmit(kSelect), (Bytes{0x6F, 0x02}));
-        EXPECT_EQ(session->transmit(kSelect), (Bytes{0x6F, 0x02}));
-        EXPECT_EQ(session->transmitRaw(kSelect), (Bytes{0x6F, 0x02}));
+        expectRefused(session->transmit(kSelect), LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable);
+        expectRefused(session->transmit(kSelect), LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable);
+        expectRefused(session->transmitRaw(kSelect), LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable);
         EXPECT_TRUE(plainCommands.empty());
         EXPECT_TRUE(rawCommands.empty());
         EXPECT_EQ(session->channelState(), state) << "the dead tunnel stays installed";
@@ -236,10 +244,10 @@ TEST_F(CardSessionByteTransportTest, ASelectThenVerifyOnADeadTunnelSendsNothing)
     channel->setState(ChannelState::Failed);
     const Bytes verifyPin{0x00, 0x20, 0x00, 0x81, 0x04, 0x31, 0x32, 0x33, 0x34};
 
-    EXPECT_EQ(session->transmit(kSelect), (Bytes{0x6F, 0x02}));
-    EXPECT_EQ(session->transmit(verifyPin), (Bytes{0x6F, 0x02}));
-    EXPECT_EQ(session->transmitRaw(kSelect), (Bytes{0x6F, 0x02}));
-    EXPECT_EQ(session->transmitRaw(verifyPin), (Bytes{0x6F, 0x02}));
+    expectRefused(session->transmit(kSelect), LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable);
+    expectRefused(session->transmit(verifyPin), LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable);
+    expectRefused(session->transmitRaw(kSelect), LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable);
+    expectRefused(session->transmitRaw(verifyPin), LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable);
     EXPECT_TRUE(plainCommands.empty()) << "a command went out in clear";
     EXPECT_TRUE(rawCommands.empty()) << "a command went out in clear";
 }
@@ -280,7 +288,7 @@ TEST_F(CardSessionByteTransportTest, ADiscardLeavesEveryOtherChannelInPlace)
     channel->setState(ChannelState::Failed);
     EXPECT_FALSE(session->discardFailedChannel()) << "the holder's operation keeps its channel";
     EXPECT_EQ(session->channelState(), ChannelState::Failed);
-    EXPECT_EQ(session->transmit(kSelect), (Bytes{0x6F, 0x02}));
+    expectRefused(session->transmit(kSelect), LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable);
     EXPECT_TRUE(plainCommands.empty());
 }
 
@@ -316,14 +324,18 @@ TEST_F(CardSessionByteTransportTest, ACommandCollectsAChainedAnswer)
     EXPECT_EQ(rawCommands[1], (Bytes{0x00, 0xC0, 0x00, 0x00, 0x01}));
 }
 
-TEST_F(CardSessionByteTransportTest, AFailingReaderThrows)
+TEST_F(CardSessionByteTransportTest, AFailingReaderIsTheError)
 {
     // An unrigged detached connection has no card to reach: the reader error
-    // surfaces, it is not turned into a status word the card never sent.
+    // is the result, it is not turned into a status word the card never sent.
     auto bare = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("bare-reader");
 
-    EXPECT_THROW((void)bare->transmit(kSelect), std::runtime_error);
-    EXPECT_THROW((void)bare->transmitRaw(kSelect), std::runtime_error);
+    const auto plain = bare->transmit(kSelect);
+    ASSERT_FALSE(plain);
+    EXPECT_EQ(plain.error().kind, LibreSCRS::SmartCard::TransportError::Kind::ReaderUnavailable);
+    const auto raw = bare->transmitRaw(kSelect);
+    ASSERT_FALSE(raw);
+    EXPECT_EQ(raw.error().kind, LibreSCRS::SmartCard::TransportError::Kind::ReaderUnavailable);
 }
 
 TEST_F(CardSessionByteTransportTest, AnEncodingOutsideTheAcceptedFormIsRejectedUnsent)
@@ -335,7 +347,9 @@ TEST_F(CardSessionByteTransportTest, AnEncodingOutsideTheAcceptedFormIsRejectedU
         {0x00, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00}, // extended Le 0000: valid, but not the shortest form
     };
     for (const auto& bytes : refused) {
-        EXPECT_THROW((void)session->transmit(bytes), std::invalid_argument);
+        const auto r = session->transmit(bytes);
+        ASSERT_FALSE(r);
+        EXPECT_EQ(r.error().kind, LibreSCRS::SmartCard::TransportError::Kind::InvalidCommand);
     }
     EXPECT_TRUE(plainCommands.empty());
     EXPECT_TRUE(rawCommands.empty());
@@ -345,7 +359,7 @@ TEST_F(CardSessionByteTransportTest, ARawCommandUnderLiveSecureMessagingSendsNot
 {
     auto* channel = install(ChannelState::Open, /*carriesSm=*/true);
 
-    EXPECT_EQ(session->transmitRaw(kSelect), (Bytes{0x6F, 0x02}));
+    expectRefused(session->transmitRaw(kSelect), LibreSCRS::SmartCard::TransportError::Kind::SecureChannelActive);
     EXPECT_TRUE(rawCommands.empty());
     EXPECT_TRUE(plainCommands.empty());
     EXPECT_EQ(channel->transmits(), 0);
@@ -373,7 +387,7 @@ TEST_F(CardSessionByteTransportTest, ARawCommandGoesOutWhenNoTunnelIsLive)
     send();
     install(ChannelState::Failed, /*carriesSm=*/true);
     rawCommands.clear();
-    EXPECT_EQ(session->transmitRaw(unusual), (Bytes{0x6F, 0x02}));
+    expectRefused(session->transmitRaw(unusual), LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable);
     EXPECT_TRUE(rawCommands.empty());
     EXPECT_TRUE(plainCommands.empty());
 }
@@ -733,7 +747,7 @@ TEST_F(CardSessionByteTransportTest, AReplacedTunnelIsNotServedByTheAppletOfTheO
 TEST_F(CardSessionByteTransportTest, ATransactionIsHeldUntilItEnds)
 {
     EXPECT_FALSE(session->isTransactionHeld());
-    session->beginTransaction();
+    ASSERT_TRUE(session->beginTransaction());
     EXPECT_TRUE(session->isTransactionHeld());
     session->endTransaction();
     EXPECT_FALSE(session->isTransactionHeld());
@@ -748,8 +762,8 @@ TEST_F(CardSessionByteTransportTest, EveryEndReachesTheReaderWhateverTheRecordSa
     int releases = 0;
     LibreSCRS::SmartCard::Internal::connectionOf(*session).setDetachedTransactionReleaseObserver(
         [&releases] { ++releases; });
-    session->beginTransaction();
-    session->beginTransaction();
+    ASSERT_TRUE(session->beginTransaction());
+    ASSERT_TRUE(session->beginTransaction());
     session->endTransaction();
     EXPECT_FALSE(session->isTransactionHeld());
     session->endTransaction();
@@ -761,13 +775,43 @@ TEST_F(CardSessionByteTransportTest, ARefusedTransactionIsNotHeld)
     LibreSCRS::SmartCard::Internal::connectionOf(*session).setDetachedTransactionFailure(
         0x8010000BL); // SCARD_E_SHARING_VIOLATION
 
-    EXPECT_THROW(session->beginTransaction(), std::runtime_error);
+    const auto r = session->beginTransaction();
+    ASSERT_FALSE(r);
+    EXPECT_EQ(r.error().kind, LibreSCRS::SmartCard::TransportError::Kind::SessionRefused);
     EXPECT_FALSE(session->isTransactionHeld());
 }
 
-TEST_F(CardSessionByteTransportTest, AReconnectWithoutACardThrows)
+// A reconnect never touches the channel: one that failed stays failed, and
+// the next command is refused.
+TEST_F(CardSessionByteTransportTest, AReconnectLeavesAFailedChannelFailed)
 {
-    EXPECT_THROW(session->reconnect(), std::runtime_error);
+    install(ChannelState::Failed, /*carriesSm=*/true, SmProtocolRequest{PaceRequest{}});
+
+    (void)session->reconnect();
+
+    EXPECT_EQ(session->channelState(), ChannelState::Failed);
+    expectRefused(session->transmit(kSelect), LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable);
+    EXPECT_TRUE(plainCommands.empty());
+}
+
+// A plain channel that is not open refuses a typed command, but the raw
+// bytes bypass no secure messaging there and go to the card.
+TEST_F(CardSessionByteTransportTest, ARawCommandUnderAClosedPlainChannelGoesToTheCard)
+{
+    install(ChannelState::Closed, /*carriesSm=*/false);
+
+    expectRefused(session->transmit(kSelect), LibreSCRS::SmartCard::TransportError::Kind::ChannelUnusable);
+    EXPECT_TRUE(plainCommands.empty());
+    const auto raw = session->transmitRaw(kSelect);
+    ASSERT_TRUE(raw.has_value());
+    EXPECT_EQ(rawCommands.size(), 1U);
+}
+
+TEST_F(CardSessionByteTransportTest, AReconnectWithoutACardIsTheError)
+{
+    const auto r = session->reconnect();
+    ASSERT_FALSE(r);
+    EXPECT_EQ(LibreSCRS::SmartCard::TransportError::Kind::ReaderUnavailable, r.error().kind);
 }
 
 TEST_F(CardSessionByteTransportTest, TheHolderThreadReachesTheChannelWithoutDeadlock)
@@ -782,7 +826,7 @@ TEST_F(CardSessionByteTransportTest, TheHolderThreadReachesTheChannelWithoutDead
     // must read the session without taking it again.
     (void)session->transmit(kSelect);
     EXPECT_EQ(channel->transmits(), 1);
-    EXPECT_EQ(session->transmitRaw(kSelect), (Bytes{0x6F, 0x02}));
+    expectRefused(session->transmitRaw(kSelect), LibreSCRS::SmartCard::TransportError::Kind::SecureChannelActive);
     EXPECT_EQ(session->channelState(), ChannelState::Open);
     EXPECT_TRUE(session->carriesSecureMessaging());
     EXPECT_TRUE(session->hasLiveSecureChannel());
@@ -877,18 +921,22 @@ TEST(ApduParseCommand, ShortDataWithATwoByteLeIsRefused)
     EXPECT_FALSE(parseCommand(Bytes{0x00, 0x2A, 0x9E, 0x9A, 0x02, 0x01, 0x02, 0x01, 0x00}).has_value());
 }
 
-// A command the byte interface cannot take is a failure of the call, which a
-// card library catches as a std::runtime_error like any other: it must not
-// leave the adapter as a logic error.
-TEST_F(CardSessionByteTransportTest, AnUnencodableCommandFailsAsARuntimeError)
+// A command the byte interface cannot take is a failed call: the adapter
+// reports it as an error, and the channel adapter reports the same error --
+// never an exception.
+TEST_F(CardSessionByteTransportTest, AnUnencodableCommandIsAFailedCall)
 {
     // More data than an extended Lc can count: the serialization cannot
     // carry it, so the session refuses the bytes.
     const APDUCommand huge{0x00, 0xD6, 0x00, 0x00, Bytes(70000, 0x11), 0, false};
     LibreSCRS::SmartCard::SessionConnection conn(*session);
-    EXPECT_THROW((void)conn.transmit(huge), std::runtime_error);
+    const auto refused = conn.transmit(huge);
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().kind, LibreSCRS::SmartCard::TransportError::Kind::InvalidCommand);
     LibreSCRS::SecureChannel::SessionChannel channel(*session);
-    EXPECT_THROW((void)channel.transmit(huge, LibreSCRS::CancelToken{}), std::runtime_error);
+    const auto viaChannel = channel.transmit(huge, LibreSCRS::CancelToken{});
+    ASSERT_FALSE(viaChannel);
+    EXPECT_EQ(viaChannel.error().kind, LibreSCRS::SmartCard::TransportError::Kind::InvalidCommand);
     EXPECT_TRUE(plainCommands.empty());
     EXPECT_TRUE(rawCommands.empty());
 }

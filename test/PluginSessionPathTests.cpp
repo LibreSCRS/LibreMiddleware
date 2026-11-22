@@ -149,8 +149,32 @@ TEST(PluginSessionPath, TheOpenScProbeSelectsPlainThenBindsRaw)
     EXPECT_FALSE(rig.raw.empty());
 }
 
+// The stand-in channels reach no card: the failed tunnel is unusable, the
+// other two have no card to answer.
+TEST(PluginSessionPath, TheStandInChannelsFailWithTheirOwnKinds)
+{
+    using Kind = LibreSCRS::SmartCard::TransportError::Kind;
+    const struct
+    {
+        StandInChannel channel;
+        Kind kind;
+    } cases[] = {
+        {StandInChannel::FailedSecureMessaging, Kind::ChannelUnusable},
+        {StandInChannel::LiveSecureMessaging, Kind::ReaderUnavailable},
+        {StandInChannel::Plain, Kind::ReaderUnavailable},
+    };
+    for (const auto& c : cases) {
+        WireRig rig;
+        LibreSCRS::SmartCard::Testing::installStandInChannel(*rig.session, c.channel);
+        const auto r = rig.session->transmit(Bytes{0x00, 0xA4, 0x04, 0x0C, 0x02, 0x3F, 0x00});
+        ASSERT_FALSE(r.has_value());
+        EXPECT_EQ(r.error().kind, c.kind);
+        EXPECT_TRUE(rig.plain.empty());
+    }
+}
+
 // Past a live secure-messaging tunnel nothing goes plain: each command rides
-// the tunnel (the stand-in answers 6F00) or is refused. Before the plugins
+// the tunnel (the stand-in has no card to answer) or is refused. Before the plugins
 // reached the card through the session, the plain probes went to the wire
 // and ended the card's secure-messaging session.
 TEST(PluginSessionPath, NoProbeSendsPlainPastALiveTunnel)
@@ -347,7 +371,7 @@ private:
 
 // Every operation wrapper of a plain-profile plugin discards a failed tunnel
 // before the operation runs: its first command goes out plain. A wrapper
-// without the discard leaves that command refused (6F02, nothing sent).
+// without the discard leaves that command refused (nothing sent).
 TEST(PluginSessionPath, PlainProfileOperationsDiscardAFailedTunnelFirst)
 {
     using LibreSCRS::Plugin::CardPlugin;

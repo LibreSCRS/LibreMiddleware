@@ -11,6 +11,7 @@
 #include <emrtd_types.h>
 
 #include <apdu.h>
+#include <smartcard/or_throw.h>
 #include <tlv.h>
 
 #include <cstdlib>
@@ -476,12 +477,14 @@ AppletInfo mapEmrtdPlugin(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, 
 
     ApduLogger logger;
     if (verbose) {
-        conn.setTransmitFilter([&logger, &conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd)
-                                   -> LibreSCRS::SmartCard::Internal::APDUResponse {
-            auto resp = conn.transmitRaw(cmd);
-            logger.log(cmd, resp);
-            return resp;
-        });
+        conn.setTransmitFilter(
+            [&logger, &conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd)
+                -> std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError> {
+                auto resp = conn.transmitRaw(cmd);
+                if (resp)
+                    logger.log(cmd, *resp);
+                return resp;
+            });
     }
 
     // 4.2 SecureChannel migration: EMRTDCard no longer performs PACE/BAC
@@ -514,12 +517,14 @@ AppletInfo mapPlugin(const std::string& pluginName, LibreSCRS::SmartCard::Intern
     ApduLogger logger;
 
     if (verbose) {
-        conn.setTransmitFilter([&logger, &conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd)
-                                   -> LibreSCRS::SmartCard::Internal::APDUResponse {
-            auto resp = conn.transmitRaw(cmd);
-            logger.log(cmd, resp);
-            return resp;
-        });
+        conn.setTransmitFilter(
+            [&logger, &conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd)
+                -> std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError> {
+                auto resp = conn.transmitRaw(cmd);
+                if (resp)
+                    logger.log(cmd, *resp);
+                return resp;
+            });
     }
 
     // Select the application
@@ -530,7 +535,8 @@ AppletInfo mapPlugin(const std::string& pluginName, LibreSCRS::SmartCard::Intern
         bool selected = false;
 
         // Try EU standard AID first
-        auto euResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(EU_VRC_AID));
+        auto euResp = LibreSCRS::SmartCard::Internal::orThrow(
+            conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(EU_VRC_AID)));
         if (euResp.isSuccess()) {
             selected = true;
         }
@@ -549,13 +555,16 @@ AppletInfo mapPlugin(const std::string& pluginName, LibreSCRS::SmartCard::Intern
             };
 
             for (const auto& seq : sequences) {
-                auto r1 = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(seq.cmd1));
+                auto r1 = LibreSCRS::SmartCard::Internal::orThrow(
+                    conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(seq.cmd1)));
                 if (!r1.isSuccess())
                     continue;
-                auto r2 = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(seq.cmd2));
+                auto r2 = LibreSCRS::SmartCard::Internal::orThrow(
+                    conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(seq.cmd2)));
                 if (!r2.isSuccess())
                     continue;
-                auto r3 = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(seq.cmd3, seq.cmd3P2));
+                auto r3 = LibreSCRS::SmartCard::Internal::orThrow(
+                    conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(seq.cmd3, seq.cmd3P2)));
                 if (r3.isSuccess()) {
                     selected = true;
                     break;
@@ -568,7 +577,7 @@ AppletInfo mapPlugin(const std::string& pluginName, LibreSCRS::SmartCard::Intern
         }
     } else if (!info.aids.empty()) {
         auto selectCmd = LibreSCRS::SmartCard::Internal::selectByAID(info.aids[0]);
-        auto selectResp = conn.transmit(selectCmd);
+        auto selectResp = LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(selectCmd));
         if (!selectResp.isSuccess()) {
             std::cerr << "Warning: SELECT AID failed with SW " << std::format("{:04X}", selectResp.statusWord())
                       << "\n";
@@ -593,7 +602,7 @@ AppletInfo mapPlugin(const std::string& pluginName, LibreSCRS::SmartCard::Intern
         }
 
         auto selectFile = LibreSCRS::SmartCard::Internal::selectByPath(df.fidHi, df.fidLo);
-        auto selectResp = conn.transmit(selectFile);
+        auto selectResp = LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(selectFile));
         if (!selectResp.isSuccess()) {
             if (selectResp.statusWord() == 0x6982) {
                 // Auth required — mark tags
@@ -610,7 +619,7 @@ AppletInfo mapPlugin(const std::string& pluginName, LibreSCRS::SmartCard::Intern
         bool reading = true;
         while (reading) {
             auto readCmd = LibreSCRS::SmartCard::Internal::readBinary(offset, chunkSize);
-            auto readResp = conn.transmit(readCmd);
+            auto readResp = LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(readCmd));
             if (readResp.isSuccess() && !readResp.data.empty()) {
                 fileData.insert(fileData.end(), readResp.data.begin(), readResp.data.end());
                 offset += static_cast<uint16_t>(readResp.data.size());

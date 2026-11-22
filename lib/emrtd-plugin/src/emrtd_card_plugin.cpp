@@ -34,6 +34,7 @@
 #include <passive_auth.h>
 #include <smartcard/session_connection.h>
 #include <smartcard/secure_buffer.h>
+#include <smartcard/or_throw.h>
 
 #include <algorithm>
 #include <compare>
@@ -200,11 +201,13 @@ public:
             // the verdict. No plugin lock is held across card I/O: a wedged
             // transmit must not stall other sessions' activationProfile /
             // setCredentials calls.
-            LibreSCRS::SmartCard::Internal::CardTransaction tx(conn);
+            auto tx =
+                LibreSCRS::SmartCard::Internal::orThrow(LibreSCRS::SmartCard::Internal::CardTransaction::begin(conn));
 
             // SELECT eMRTD applet by AID (P2=0x0C: no FCI response)
-            auto response = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(
-                {emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0x0C));
+            auto response =
+                LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(
+                    {emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0x0C)));
             if (!response.isSuccess())
                 return false;
 
@@ -243,8 +246,9 @@ public:
             // The probe reads at the master file and leaves it selected;
             // restore the applet DF context the read path assumes.
             try {
-                conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(
-                    {emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0x0C));
+                static_cast<void>(
+                    LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(
+                        {emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0x0C))));
             } catch (...) {
             }
 
@@ -557,8 +561,9 @@ private:
             }
             // The probe leaves the MF selected; restore the applet DF context.
             try {
-                conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(
-                    {emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0x0C));
+                static_cast<void>(
+                    LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(
+                        {emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0x0C))));
             } catch (...) {
             }
 

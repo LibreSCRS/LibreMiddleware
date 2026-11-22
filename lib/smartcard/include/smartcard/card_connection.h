@@ -10,6 +10,8 @@
 #include <smartcard/i_connection.h>
 
 #include <cstdint>
+#include <expected>
+#include <utility>
 #include <vector>
 
 namespace LibreSCRS::SmartCard {
@@ -29,15 +31,15 @@ class CardConnection : public IConnection
 public:
     /// Begins an exclusive PC/SC transaction and records it as held. Each
     /// call needs its own endTransaction(): the reader counts them.
-    virtual void beginTransaction() = 0;
+    [[nodiscard]] virtual std::expected<void, TransportError> beginTransaction() = 0;
     /// Ends the transaction, clearing the record first. Never throws.
     virtual void endTransaction() noexcept = 0;
     /// The last of beginTransaction() and endTransaction() was a begin; not
     /// a count.
     [[nodiscard]] virtual bool isTransactionHeld() const noexcept = 0;
-    [[nodiscard]] virtual std::vector<std::uint8_t> getATR() const = 0;
+    [[nodiscard]] virtual std::expected<std::vector<std::uint8_t>, TransportError> getATR() const = 0;
     /// Re-establishes the connection without resetting the card.
-    virtual void reconnect() = 0;
+    [[nodiscard]] virtual std::expected<void, TransportError> reconnect() = 0;
 };
 
 namespace Internal {
@@ -54,9 +56,13 @@ namespace Internal {
 class CardTransaction
 {
 public:
-    explicit CardTransaction(CardConnection& c) : conn(&c)
+    /// Begins the transaction; the error when the reader refuses it.
+    [[nodiscard]] static std::expected<CardTransaction, TransportError> begin(CardConnection& c)
     {
-        conn->beginTransaction();
+        if (auto began = c.beginTransaction(); !began) {
+            return std::unexpected(std::move(began.error()));
+        }
+        return CardTransaction(c);
     }
     ~CardTransaction()
     {
@@ -103,6 +109,9 @@ public:
     }
 
 private:
+    // Takes over a transaction that is already begun.
+    explicit CardTransaction(CardConnection& c) noexcept : conn(&c) {}
+
     CardConnection* conn;
 };
 

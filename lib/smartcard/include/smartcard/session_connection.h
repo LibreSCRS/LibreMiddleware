@@ -17,8 +17,8 @@
 #include "apdu.h"
 
 #include <cstdint>
+#include <expected>
 #include <span>
-#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -31,8 +31,8 @@ namespace LibreSCRS::SmartCard {
 /// transmit() is the session's: through the open channel when the session
 /// holds one, refused when a secure-messaging channel it holds has failed,
 /// plain otherwise. transmitRaw() sends the bytes as given, refused while a
-/// secure-messaging channel is live. A reader failure throws, as the
-/// connection itself does.
+/// secure-messaging channel is live. A failed exchange is the error, as the
+/// session reports it.
 class SessionConnection final : public CardConnection
 {
 public:
@@ -40,46 +40,29 @@ public:
         : session(session), token(std::move(token))
     {}
 
-    Internal::APDUResponse transmit(const Internal::APDUCommand& cmd) override
+    std::expected<Internal::APDUResponse, TransportError> transmit(const Internal::APDUCommand& cmd) override
     {
         return transmitThrough(session, cmd, token);
     }
 
-    /// transmit() for a probe that weighs only the status word: a reader
-    /// failure reads as 6F00 (no precise diagnosis) instead of throwing.
-    Internal::APDUResponse probe(const Internal::APDUCommand& cmd)
-    {
-        try {
-            return transmit(cmd);
-        } catch (...) {
-            return Internal::APDUResponse{{}, 0x6F, 0x00};
-        }
-    }
-
-    /// @p cmd through CardSession::transmit, as a response. A command the
-    /// byte interface refuses (std::invalid_argument: no APDU encodes it) is
-    /// a failed exchange to a card library, which catches std::runtime_error.
-    static Internal::APDUResponse transmitThrough(CardSession& session, const Internal::APDUCommand& cmd,
-                                                  LibreSCRS::CancelToken token)
+    /// @p cmd through CardSession::transmit, as a response or the error.
+    static std::expected<Internal::APDUResponse, TransportError>
+    transmitThrough(CardSession& session, const Internal::APDUCommand& cmd, LibreSCRS::CancelToken token)
     {
         // The serialization can carry a PIN: the bytes are wiped once sent.
         const Internal::SecureBuffer bytes(cmd.toBytes());
-        try {
-            return toResponse(
-                session.transmit(std::span<const std::uint8_t>(bytes.data(), bytes.size()), std::move(token)));
-        } catch (const std::invalid_argument& e) {
-            throw std::runtime_error(e.what());
-        }
+        return toResponse(
+            session.transmit(std::span<const std::uint8_t>(bytes.data(), bytes.size()), std::move(token)));
     }
 
-    Internal::APDUResponse transmitRaw(std::span<const std::uint8_t> cmdBytes) override
+    std::expected<Internal::APDUResponse, TransportError> transmitRaw(std::span<const std::uint8_t> cmdBytes) override
     {
         return toResponse(session.transmitRaw(cmdBytes));
     }
 
-    void beginTransaction() override
+    std::expected<void, TransportError> beginTransaction() override
     {
-        session.beginTransaction();
+        return session.beginTransaction();
     }
 
     void endTransaction() noexcept override
@@ -93,35 +76,38 @@ public:
     }
 
     /// The ATR the card gave when the session opened. A session without a
-    /// card (a detached one) has none, and the call fails as the connection's
-    /// own query of a card that is not there does.
-    [[nodiscard]] std::vector<std::uint8_t> getATR() const override
+    /// card (a detached one) has none: NoCardPresent, as the connection's own
+    /// query of a card that is not there.
+    [[nodiscard]] std::expected<std::vector<std::uint8_t>, TransportError> getATR() const override
     {
         const auto& atr = session.atr();
         if (atr.empty()) {
-            throw std::runtime_error("no ATR: the card session has no card");
+            return std::unexpected(
+                TransportError{TransportError::Kind::NoCardPresent, "no ATR: the card session has no card"});
         }
         return atr;
     }
 
-    void reconnect() override
+    std::expected<void, TransportError> reconnect() override
     {
-        session.reconnect();
+        return session.reconnect();
     }
 
-    /// An answer (data, SW1, SW2) as a response. The data can be a decrypted
-    /// record: the byte string it came in is wiped.
-    static Internal::APDUResponse toResponse(std::vector<std::uint8_t> answer)
+    /// An answer (data, then the SW1 SW2 the session always appends) as a
+    /// response, or the error. The data can be
+    /// a decrypted record: the byte string it came in is wiped.
+    static std::expected<Internal::APDUResponse, TransportError>
+    toResponse(std::expected<std::vector<std::uint8_t>, TransportError> result)
     {
-        Internal::APDUResponse response{{}, 0x6F, 0x00};
-        if (answer.size() >= 2) {
-            response.sw1 = answer[answer.size() - 2];
-            response.sw2 = answer[answer.size() - 1];
-            response.data.assign(answer.begin(), answer.end() - 2);
+        if (!result) {
+            return std::unexpected(std::move(result.error()));
         }
-        if (!answer.empty()) {
-            Internal::secureWipe(answer.data(), answer.size());
-        }
+        auto& answer = *result;
+        Internal::APDUResponse response{};
+        response.sw1 = answer[answer.size() - 2];
+        response.sw2 = answer[answer.size() - 1];
+        response.data.assign(answer.begin(), answer.end() - 2);
+        Internal::secureWipe(answer.data(), answer.size());
         return response;
     }
 

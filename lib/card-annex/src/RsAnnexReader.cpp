@@ -13,6 +13,7 @@
 #include <rs_signed_object.h>
 #include <rs_tags.h>
 #include <smartcard/chunked_read.h>
+#include <smartcard/or_throw.h>
 #include <tlv.h>
 
 #include <algorithm>
@@ -35,9 +36,9 @@ constexpr std::uint8_t kMasterFileLo = 0x00;
 [[nodiscard]] SC::APDUResponse dispatch(const AnnexContext& ctx, const SC::APDUCommand& cmd)
 {
     if (ctx.channel != nullptr && ctx.channel->state() == LibreSCRS::SecureChannel::ChannelState::Open) {
-        return ctx.channel->transmit(cmd, ctx.token);
+        return LibreSCRS::SmartCard::Internal::orThrow(ctx.channel->transmit(cmd, ctx.token));
     }
-    return ctx.conn->transmit(cmd);
+    return LibreSCRS::SmartCard::Internal::orThrow(ctx.conn->transmit(cmd));
 }
 
 /// SELECT the file at @p dfPath + @p fid, then read its container whole.

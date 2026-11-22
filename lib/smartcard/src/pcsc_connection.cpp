@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "pcsc_connection.h"
+#include "pcsc_classify.h"
 #include "pcsc_trace.h"
 #include <smartcard/secure_buffer.h>
 
@@ -234,7 +235,17 @@ PCSCConnection::PCSCConnection(DetachedTag, const std::string& readerName) : sto
 // here would be one LIBRESCRS_PUBLIC_API away from a dynamic export, which
 // --gc-sections cannot drop either.
 
-APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
+std::expected<std::unique_ptr<PCSCConnection>, TransportError> PCSCConnection::open(const std::string& readerName)
+{
+    // The constructor is private; std::make_unique cannot reach it.
+    std::unique_ptr<PCSCConnection> conn(new PCSCConnection(readerName));
+    if (auto connected = conn->connect(); !connected) {
+        return std::unexpected(std::move(connected.error()));
+    }
+    return conn;
+}
+
+std::expected<APDUResponse, TransportError> PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
 {
     // Detached test seam: play the card side of a live SM tunnel. Taken ONLY
     // by a detached connection with a responder installed via
@@ -258,29 +269,31 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
 
     const std::span<const std::uint8_t> command(cmdBytes, cmdLen);
     auto reply = exchangeWire(command);
-    if (!reply) {
+    if (!reply && reply.error().kind == TransportError::Kind::CardReset) {
         // The card was reset, or its session lost with the card still in the
         // reader. Re-establish the handle without resetting the card, then
         // send the command once more -- unless it carries a PIN: resent, it
         // could spend a try on a card whose verified state the reset cleared,
         // or on another card.
-        reconnect();
+        if (auto reconnected = reconnect(); !reconnected) {
+            return std::unexpected(std::move(reconnected.error()));
+        }
         // A secure-messaging command (CLA b3-b4 set) is never resent either:
         // the reset ended the card's SM session, so the resend would be
         // answered as an unknown wrapped command at best, and its MAC counter
         // is already spent.
         if (cmdLen >= 2 && (isSensitiveIns(cmdBytes[1]) || (cmdBytes[0] & 0x0C) != 0)) {
-            throw PCSCError("SCardTransmit failed", SCARD_W_RESET_CARD);
+            return std::unexpected(std::move(reply.error()));
         }
         reply = exchangeWire(command);
-        if (!reply) {
-            throw PCSCError("SCardTransmit failed", SCARD_W_RESET_CARD);
-        }
+    }
+    if (!reply) {
+        return std::unexpected(std::move(reply.error()));
     }
 
     if (reply->size() < 2) {
-        throw PCSCError("SCardTransmit: response too short (" + std::to_string(reply->size()) + " bytes)",
-                        SCARD_F_COMM_ERROR);
+        return std::unexpected(pcscFailure(SCARD_F_COMM_ERROR, "SCardTransmit: response too short (" +
+                                                                   std::to_string(reply->size()) + " bytes)"));
     }
     APDUResponse response;
     response.sw1 = (*reply)[reply->size() - 2];
@@ -293,7 +306,7 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
     return response;
 }
 
-void PCSCConnection::beginTransaction()
+std::expected<void, TransportError> PCSCConnection::beginTransaction()
 {
     // Detached test connection: no card. Treat the transaction as held so
     // test-only holder acquisition through the CardTransaction RAII wrapper
@@ -301,12 +314,15 @@ void PCSCConnection::beginTransaction()
     // detached seam, the only way to reach a begin failure without hardware.
     if (detached()) {
         if (detachedTransactionRv != SCARD_S_SUCCESS)
-            throw PCSCError("SCardBeginTransaction failed", detachedTransactionRv);
+            return std::unexpected(pcscFailure(detachedTransactionRv, "SCardBeginTransaction failed"));
         callerHoldsTransaction = true;
-        return;
+        return {};
     }
-    beginOnCard();
+    if (auto began = beginOnCard(); !began) {
+        return began;
+    }
     callerHoldsTransaction = true;
+    return {};
 }
 
 void PCSCConnection::endTransaction() noexcept
@@ -329,7 +345,7 @@ void PCSCConnection::endTransaction() noexcept
     endOnCard();
 }
 
-std::vector<uint8_t> PCSCConnection::getATR() const
+std::expected<std::vector<uint8_t>, TransportError> PCSCConnection::getATR() const
 {
     // Detached test connection WITH an ATR installed via setDetachedAtr: hand
     // those bytes back. A detached connection with no ATR installed goes on to
@@ -345,7 +361,7 @@ std::vector<uint8_t> PCSCConnection::getATR() const
     return atrFromCard();
 }
 
-APDUResponse PCSCConnection::transmitRaw(const APDUCommand& cmd)
+std::expected<APDUResponse, TransportError> PCSCConnection::transmitRaw(const APDUCommand& cmd)
 {
     // SecureBuffer adoption: the serialization may carry PIN/PUK bytes
     // (PIN verbs), so the wire copy is cleansed on every exit path.
@@ -353,12 +369,12 @@ APDUResponse PCSCConnection::transmitRaw(const APDUCommand& cmd)
     return transmitRaw(bytes.data(), static_cast<DWORD>(bytes.size()));
 }
 
-APDUResponse PCSCConnection::transmitRaw(std::span<const std::uint8_t> cmdBytes)
+std::expected<APDUResponse, TransportError> PCSCConnection::transmitRaw(std::span<const std::uint8_t> cmdBytes)
 {
     return transmitRaw(cmdBytes.data(), static_cast<DWORD>(cmdBytes.size()));
 }
 
-APDUResponse PCSCConnection::transmit(const APDUCommand& cmd)
+std::expected<APDUResponse, TransportError> PCSCConnection::transmit(const APDUCommand& cmd)
 {
     if (transmitFilter)
         return transmitFilter(cmd);
@@ -366,7 +382,10 @@ APDUResponse PCSCConnection::transmit(const APDUCommand& cmd)
     // SecureBuffer adoption: the serialization may carry PIN/PUK bytes
     // (PIN verbs), so the wire copy is cleansed on every exit path.
     SecureBuffer cmdBytes(cmd.toBytes());
-    auto response = transmitRaw(cmdBytes.data(), static_cast<DWORD>(cmdBytes.size()));
+    auto first = transmitRaw(cmdBytes.data(), static_cast<DWORD>(cmdBytes.size()));
+    if (!first)
+        return first;
+    auto response = std::move(*first);
 
     // SW1=61: response data available — send GET RESPONSE to retrieve it.
     // This is an ISO 7816-4 mechanism used by both T=0 and T=1 protocols.
@@ -376,22 +395,27 @@ APDUResponse PCSCConnection::transmit(const APDUCommand& cmd)
     // indefinitely, which would grow `accumulated` without bound. 256
     // iterations × 256 bytes = 64 KiB is well above any legitimate APDU
     // response chain (eMRTD DG files cap well below this; EF.CERT payloads
-    // similarly). Past either cap the answer is no answer: 6700 with no
-    // data, never a truncated body under a success status word.
+    // similarly). Past either cap the card broke the protocol: a protocol
+    // error, never a truncated body under a success status word and never a
+    // status word the card did not send.
     constexpr size_t kMaxGetResponseIters = 256;
     constexpr size_t kMaxGetResponseBytes = 65536;
     size_t getRespIters = 0;
     size_t totalBytes = response.data.size();
     while (response.sw1 == 0x61) {
         if (++getRespIters > kMaxGetResponseIters)
-            return APDUResponse{{}, 0x67, 0x00};
+            return std::unexpected(pcscFailure(SCARD_F_COMM_ERROR, "GET RESPONSE chain exceeds the iteration cap"));
         auto accumulated = std::move(response.data);
         uint8_t le = response.sw2; // 0x00 = 256 bytes
         uint8_t getResponse[] = {0x00, 0xC0, 0x00, 0x00, le};
-        response = transmitRaw(getResponse, sizeof(getResponse));
+        // A chain broken midway is the error, never the part already read.
+        auto next = transmitRaw(getResponse, sizeof(getResponse));
+        if (!next)
+            return next;
+        response = std::move(*next);
         totalBytes += response.data.size();
         if (totalBytes > kMaxGetResponseBytes)
-            return APDUResponse{{}, 0x67, 0x00};
+            return std::unexpected(pcscFailure(SCARD_F_COMM_ERROR, "GET RESPONSE chain exceeds the size cap"));
         if (!accumulated.empty()) {
             // Grow then copy, rather than a range insert. Same bytes, same
             // order -- but GCC 13 cannot see the bound through
@@ -418,7 +442,10 @@ APDUResponse PCSCConnection::transmit(const APDUCommand& cmd)
         APDUCommand retry = cmd;
         retry.le = response.sw2; // exact length announced by the card (0x00 = 256)
         const SecureBuffer retryBytes(retry.toBytes());
-        response = transmitRaw(retryBytes.data(), static_cast<DWORD>(retryBytes.size()));
+        auto retried = transmitRaw(retryBytes.data(), static_cast<DWORD>(retryBytes.size()));
+        if (!retried)
+            return retried;
+        response = std::move(*retried);
     }
 
     return response;

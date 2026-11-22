@@ -15,6 +15,7 @@
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <apdu.h>
+#include <smartcard/or_throw.h>
 #include <ber.h>
 #include <ef_dir.h>
 #include <tlv.h>
@@ -87,7 +88,8 @@ std::optional<uint8_t> tryProbe(LibreSCRS::SmartCard::Internal::PCSCConnection& 
         bool isLast = (i == probe.selectSequence.size() - 1);
         uint8_t preferredP2 = isLast ? probe.lastP2 : 0x00;
 
-        auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(probe.selectSequence[i], preferredP2));
+        auto resp = LibreSCRS::SmartCard::Internal::orThrow(
+            conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(probe.selectSequence[i], preferredP2)));
         if (resp.isSuccess() || resp.sw1 == 0x62 || resp.sw1 == 0x61) {
             if (isLast)
                 workingP2 = preferredP2;
@@ -102,7 +104,8 @@ std::optional<uint8_t> tryProbe(LibreSCRS::SmartCard::Internal::PCSCConnection& 
         for (uint8_t altP2 : AID_P2_ALTS) {
             if (altP2 == preferredP2)
                 continue;
-            resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(probe.selectSequence[i], altP2));
+            resp = LibreSCRS::SmartCard::Internal::orThrow(
+                conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(probe.selectSequence[i], altP2)));
             if (resp.isSuccess() || resp.sw1 == 0x62 || resp.sw1 == 0x61) {
                 if (isLast)
                     workingP2 = altP2;
@@ -122,17 +125,20 @@ LibreSCRS::SmartCard::Internal::APDUResponse trySelectVariant(LibreSCRS::SmartCa
 {
     switch (variant) {
     case 0: // P1=0x08, P2=0x00, Le=4 — SELECT by path from MF (eID, health)
-        return conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(hi, lo));
+        return LibreSCRS::SmartCard::Internal::orThrow(
+            conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(hi, lo)));
     case 1: // P1=0x02, P2=0x04, no Le — SELECT child EF, return FCP (vehicle)
-        return conn.transmit(LibreSCRS::SmartCard::Internal::APDUCommand{
-            .cla = 0x00, .ins = 0xA4, .p1 = 0x02, .p2 = 0x04, .data = {hi, lo}, .le = 0, .hasLe = false});
+        return LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(LibreSCRS::SmartCard::Internal::APDUCommand{
+            .cla = 0x00, .ins = 0xA4, .p1 = 0x02, .p2 = 0x04, .data = {hi, lo}, .le = 0, .hasLe = false}));
     case 2: // P1=0x00, P2=0x00, Le=0 — SELECT by FID, return FCI (generic)
-        return conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(hi, lo));
+        return LibreSCRS::SmartCard::Internal::orThrow(
+            conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(hi, lo)));
     case 3: // P1=0x02, P2=0x0C, no Le — SELECT child EF, no response data (strict cards)
-        return conn.transmit(LibreSCRS::SmartCard::Internal::APDUCommand{
-            .cla = 0x00, .ins = 0xA4, .p1 = 0x02, .p2 = 0x0C, .data = {hi, lo}, .le = 0, .hasLe = false});
+        return LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(LibreSCRS::SmartCard::Internal::APDUCommand{
+            .cla = 0x00, .ins = 0xA4, .p1 = 0x02, .p2 = 0x0C, .data = {hi, lo}, .le = 0, .hasLe = false}));
     case 4: // P1=0x00, P2=0x0C, no Le — SELECT by FID, no response data (strict cards)
-        return conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(hi, lo, 0x0C));
+        return LibreSCRS::SmartCard::Internal::orThrow(
+            conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(hi, lo, 0x0C)));
     default:
         return LibreSCRS::SmartCard::Internal::APDUResponse{.data = {}, .sw1 = 0x6A, .sw2 = 0x82};
     }
@@ -228,12 +234,12 @@ bool selectByEfDirPath(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, con
     if (path.empty())
         return false;
 
-    auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::APDUCommand{
-        .cla = 0x00, .ins = 0xA4, .p1 = 0x08, .p2 = 0x0C, .data = path, .le = 0, .hasLe = false});
+    auto resp = LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(LibreSCRS::SmartCard::Internal::APDUCommand{
+        .cla = 0x00, .ins = 0xA4, .p1 = 0x08, .p2 = 0x0C, .data = path, .le = 0, .hasLe = false}));
     if (resp.isSuccess() || resp.sw1 == 0x61 || resp.sw1 == 0x62)
         return true;
-    resp = conn.transmit(LibreSCRS::SmartCard::Internal::APDUCommand{
-        .cla = 0x00, .ins = 0xA4, .p1 = 0x08, .p2 = 0x00, .data = path, .le = 0, .hasLe = true});
+    resp = LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(LibreSCRS::SmartCard::Internal::APDUCommand{
+        .cla = 0x00, .ins = 0xA4, .p1 = 0x08, .p2 = 0x00, .data = path, .le = 0, .hasLe = true}));
     return resp.isSuccess() || resp.sw1 == 0x61 || resp.sw1 == 0x62;
 }
 
@@ -248,12 +254,14 @@ std::vector<uint8_t> readFileContent(LibreSCRS::SmartCard::Internal::PCSCConnect
     LibreSCRS::SmartCard::Internal::APDUResponse firstResp{};
 
     for (uint8_t cs : CHUNK_SIZES) {
-        firstResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, cs));
+        firstResp =
+            LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, cs)));
 
         // SW=6C XX: card tells us correct Le — use it
         if (firstResp.sw1 == 0x6C) {
             chunkSize = firstResp.sw2;
-            firstResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, chunkSize));
+            firstResp = LibreSCRS::SmartCard::Internal::orThrow(
+                conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, chunkSize)));
             break;
         }
 
@@ -275,7 +283,8 @@ std::vector<uint8_t> readFileContent(LibreSCRS::SmartCard::Internal::PCSCConnect
     // Multi-chunk read loop
     size_t offset = result.size();
     while (offset < MAX_READ_SIZE) {
-        auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(static_cast<uint16_t>(offset), chunkSize));
+        auto resp = LibreSCRS::SmartCard::Internal::orThrow(
+            conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(static_cast<uint16_t>(offset), chunkSize)));
         if (resp.data.empty() || (!resp.isSuccess() && resp.statusWord() != 0x6282))
             break;
         result.insert(result.end(), resp.data.begin(), resp.data.end());
@@ -418,16 +427,19 @@ std::string probeCertPath(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, 
         uint8_t lo = path[i + 1];
         std::string fid = formatFid(hi, lo);
 
-        auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(hi, lo, 0x0C));
+        auto resp = LibreSCRS::SmartCard::Internal::orThrow(
+            conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(hi, lo, 0x0C)));
         if (!resp.isSuccess()) {
-            resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(hi, lo, 0x00));
+            resp = LibreSCRS::SmartCard::Internal::orThrow(
+                conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(hi, lo, 0x00)));
         }
         if (!resp.isSuccess()) {
             return std::format("[SELECT {} failed: {:04X} under {}]", fid, resp.statusWord(), lastDf);
         }
 
         if (i + 2 >= path.size()) {
-            auto readResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 4));
+            auto readResp = LibreSCRS::SmartCard::Internal::orThrow(
+                conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 4)));
             if (readResp.isSuccess() || readResp.statusWord() == 0x6282) {
                 return "[readable]";
             } else if (readResp.statusWord() == 0x6982) {
@@ -653,7 +665,7 @@ bool probePIV(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, FileNode& df
 
         LibreSCRS::SmartCard::Internal::APDUCommand cmd{
             .cla = 0x00, .ins = 0xCB, .p1 = 0x3F, .p2 = 0xFF, .data = data, .le = 0, .hasLe = true};
-        auto resp = conn.transmit(cmd);
+        auto resp = LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(cmd));
 
         FileNode efNode;
         efNode.name = std::format("{} ({})", name, formatHex(obj.tag));
@@ -749,7 +761,8 @@ void walkFidRanges(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, FileNod
                     // The successful SELECT just made that DF current; without
                     // stepping back to the MF the rest of this sweep would
                     // measure the DF's children and file them under MF.
-                    conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00));
+                    static_cast<void>(LibreSCRS::SmartCard::Internal::orThrow(
+                        conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00))));
                 }
 
                 parent.children.push_back(efNode);
@@ -819,7 +832,7 @@ ScanResult discoverCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, bo
 {
     ScanResult result;
     try {
-        result.atr = conn.getATR();
+        result.atr = LibreSCRS::SmartCard::Internal::orThrow(conn.getATR());
     } catch (const std::exception&) {
         // A detached (scripted) connection has no card handle to ask; the
         // scan itself does not need the ATR.
@@ -828,12 +841,14 @@ ScanResult discoverCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, bo
     ApduLogger logger;
 
     if (verbose) {
-        conn.setTransmitFilter([&logger, &conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd)
-                                   -> LibreSCRS::SmartCard::Internal::APDUResponse {
-            auto resp = conn.transmitRaw(cmd);
-            logger.log(cmd, resp);
-            return resp;
-        });
+        conn.setTransmitFilter(
+            [&logger, &conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd)
+                -> std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError> {
+                auto resp = conn.transmitRaw(cmd);
+                if (resp)
+                    logger.log(cmd, *resp);
+                return resp;
+            });
     }
 
     std::vector<std::vector<uint8_t>> detectedAIDs;
@@ -843,7 +858,7 @@ ScanResult discoverCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, bo
     // This lists all applications on the card regardless of country/vendor
     {
         auto selectMF = LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00);
-        conn.transmit(selectMF);
+        static_cast<void>(LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(selectMF)));
 
         // Try SELECT EF.DIR by FID — multiple methods for strict cards
         int dirVariant = -1;
@@ -1007,10 +1022,11 @@ ScanResult discoverCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, bo
         // and only a card reset clears that. A detached (scripted)
         // connection has nothing to reset.
         try {
-            conn.reconnectWithReset();
+            LibreSCRS::SmartCard::Internal::orThrow(conn.reconnectWithReset());
         } catch (const std::exception&) {
         }
-        conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00));
+        static_cast<void>(LibreSCRS::SmartCard::Internal::orThrow(
+            conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00))));
         FileNode mfNode;
         mfNode.name = "MF";
         mfNode.fidHi = 0x3F;

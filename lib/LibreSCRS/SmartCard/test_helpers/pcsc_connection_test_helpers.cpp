@@ -21,7 +21,7 @@
 /// - @c setDetachedAtr — the synthetic-ATR override for detached
 ///   connections;
 /// - @c setDetachedTransactionFailure — makes a detached
-///   @c beginTransaction() throw, so a caller that must contain that throw
+///   @c beginTransaction() fail, so a caller that must contain that failure
 ///   can be measured doing it;
 /// - @c setDetachedTransactionReleaseObserver — runs test code at the moment
 ///   a detached @c endTransaction() takes effect, which is the only point at

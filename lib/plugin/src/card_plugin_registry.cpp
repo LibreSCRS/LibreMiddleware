@@ -376,7 +376,7 @@ CardPluginService::findAllCandidates(std::span<const std::uint8_t> atr,
     }
 
     // A secure-messaging channel that failed would refuse every probe
-    // command (6F02). Identifying the card starts a new, plain interaction
+    // command (ChannelUnusable). Identifying the card starts a new, plain interaction
     // and no earlier operation's commands follow it, so the dead channel goes
     // here, explicitly; the session never drops one on its own.
     if (session.discardFailedChannel()) {

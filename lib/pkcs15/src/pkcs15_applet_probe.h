@@ -6,6 +6,7 @@
 
 #include <apdu.h>
 #include <smartcard/i_connection.h>
+#include <smartcard/or_throw.h>
 
 #include <cstdint>
 #include <vector>
@@ -39,7 +40,8 @@ enum class ProbeResult : std::uint8_t {
 [[nodiscard]] inline ProbeResult probeApplet(LibreSCRS::SmartCard::IConnection& conn)
 {
     std::vector<std::uint8_t> aid(kPkcs15Aid.begin(), kPkcs15Aid.end());
-    const auto aidResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid, 0x0C));
+    const auto aidResp =
+        LibreSCRS::SmartCard::Internal::orThrow(conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid, 0x0C)));
     if (aidResp.isSuccess()) {
         return ProbeResult::Ok;
     }

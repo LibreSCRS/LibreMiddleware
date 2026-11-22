@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
+#include <bac.h>
 #include <pace.h>
 
 #include <apdu.h>
@@ -25,6 +26,8 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <variant>
+#include <expected>
 #include <vector>
 
 using namespace emrtd::crypto;
@@ -595,7 +598,7 @@ public:
         BN_CTX_free(ctx);
     }
 
-    APDUResponse transmit(const APDUCommand& cmd) override
+    std::expected<APDUResponse, LibreSCRS::SmartCard::TransportError> transmit(const APDUCommand& cmd) override
     {
         if (cmd.ins == 0x22)
             return ok({});
@@ -615,7 +618,8 @@ public:
         }
     }
 
-    APDUResponse transmitRaw(std::span<const std::uint8_t>) override
+    std::expected<APDUResponse, LibreSCRS::SmartCard::TransportError>
+    transmitRaw(std::span<const std::uint8_t>) override
     {
         return status(0x6D00);
     }
@@ -761,9 +765,67 @@ TEST(PACEFakeChip, AWrongCanIsRefusedAtTheTerminalsToken)
     const auto keys = performPACE(chip, canParams("654321"));
 
     ASSERT_FALSE(keys.has_value());
-    EXPECT_EQ(keys.error(), PaceFailure::Failed);
+    EXPECT_EQ(keys.error(), PaceError{PaceFailure::Failed});
     EXPECT_TRUE(chip.sawTheTerminalsToken) << "a wrong CAN only shows at mutual authentication";
     EXPECT_FALSE(chip.acceptedTheTerminalsToken);
+}
+
+namespace {
+
+// A connection whose reader fails on the @c failAt-th exchange (1-based) and
+// otherwise answers every command 9000 with eight zero bytes.
+class FailingReader final : public LibreSCRS::SmartCard::IConnection
+{
+public:
+    explicit FailingReader(int failAtExchange) : failAt(failAtExchange) {}
+
+    std::expected<APDUResponse, LibreSCRS::SmartCard::TransportError> transmit(const APDUCommand&) override
+    {
+        if (++exchanges == failAt) {
+            return std::unexpected(LibreSCRS::SmartCard::TransportError{
+                LibreSCRS::SmartCard::TransportError::Kind::NoCardPresent, "scripted: the card left the field"});
+        }
+        return APDUResponse{std::vector<uint8_t>(8, 0x00), 0x90, 0x00};
+    }
+
+    std::expected<APDUResponse, LibreSCRS::SmartCard::TransportError>
+    transmitRaw(std::span<const std::uint8_t>) override
+    {
+        return APDUResponse{{}, 0x6D, 0x00};
+    }
+
+    int exchanges = 0;
+
+private:
+    int failAt;
+};
+
+} // namespace
+
+TEST(PACEReaderError, AReaderErrorIsCarriedAsTheTransportErrorNotAPaceFailure)
+{
+    FailingReader reader(1);
+    const auto keys = performPACE(reader, canParams("123456"));
+
+    ASSERT_FALSE(keys.has_value());
+    const auto* transport = std::get_if<LibreSCRS::SmartCard::TransportError>(&keys.error());
+    ASSERT_NE(transport, nullptr);
+    EXPECT_EQ(transport->kind, LibreSCRS::SmartCard::TransportError::Kind::NoCardPresent);
+}
+
+TEST(BACReaderError, AReaderErrorIsTheOuterErrorAndARefusalTheEmptyOptional)
+{
+    const auto keys = deriveBACKeys("L898902C", "690806", "940623");
+
+    FailingReader failing(2); // GET CHALLENGE answers, MUTUAL AUTHENTICATE fails
+    const auto lost = performBAC(failing, keys);
+    ASSERT_FALSE(lost.has_value());
+    EXPECT_EQ(lost.error().kind, LibreSCRS::SmartCard::TransportError::Kind::NoCardPresent);
+
+    FailingReader answering(0); // MUTUAL AUTHENTICATE answers 9000 with too little data
+    const auto refused = performBAC(answering, keys);
+    ASSERT_TRUE(refused.has_value());
+    EXPECT_FALSE(refused->has_value()) << "the card refusing is not a transport error";
 }
 
 // ---------------------------------------------------------------------------

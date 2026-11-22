@@ -17,7 +17,10 @@
 
 #include "secure_messaging.h"
 
+#include <expected>
 #include <memory>
+#include <new>
+#include <optional>
 #include <utility>
 
 namespace LibreSCRS::SecureChannel::detail {
@@ -67,32 +70,34 @@ public:
         appletAid = std::move(aid);
     }
 
-    [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
+    [[nodiscard]] std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError>
     transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token)
     {
-        if (channelState == ChannelState::Closed) {
-            return makeSentinel(0x6F, 0x00);
-        }
-        if (channelState == ChannelState::Failed) {
-            return makeSentinel(0x6F, 0x02);
+        using LibreSCRS::SmartCard::TransportError;
+        if (channelState != ChannelState::Open) {
+            return std::unexpected(TransportError{TransportError::Kind::ChannelUnusable,
+                                                  "the secure-messaging channel is closed or has failed"});
         }
         if (token.isCancellable() && token.isCancelled()) {
-            return makeSentinel(0x6F, 0x01);
-        }
-        if (!sm) {
-            channelState = ChannelState::Failed;
-            return makeSentinel(0x6F, 0x02);
+            return std::unexpected(
+                TransportError{TransportError::Kind::Cancelled, "cancelled before the command was sent"});
         }
 
         // SecureBuffer adoption: the plaintext serialization may carry
         // PIN/PUK bytes (PIN verbs through an SM channel), so it is
         // cleansed on every exit path. `wrapped` is SM ciphertext and
         // needs no cleansing.
-        const LibreSCRS::SmartCard::Internal::SecureBuffer plainBytes(cmd.toBytes());
-        auto wrapped = sm->protect(plainBytes);
+        std::vector<std::uint8_t> wrapped;
+        try {
+            const LibreSCRS::SmartCard::Internal::SecureBuffer plainBytes(cmd.toBytes());
+            wrapped = sm->protect(plainBytes);
+        } catch (const std::bad_alloc&) {
+            throw;
+        } catch (...) {
+            return fail(TransportError::Kind::ChannelUnusable, "secure messaging could not wrap the command");
+        }
         if (wrapped.size() < 5) {
-            channelState = ChannelState::Failed;
-            return makeSentinel(0x6F, 0x02);
+            return fail(TransportError::Kind::ChannelUnusable, "secure messaging produced a command too short");
         }
 
         // Ship the wrapped bytes verbatim. Round-tripping through an
@@ -102,13 +107,17 @@ public:
         // prefix that the parser misread as Lc=0, dropping the entire
         // encrypted DigestInfo body). transmitRaw goes straight to the
         // wire and bypasses the host-side filter stack.
-        LibreSCRS::SmartCard::Internal::APDUResponse raw = connection.transmitRaw(wrapped);
+        auto sent = connection.transmitRaw(wrapped);
+        if (!sent) {
+            // The card may have processed the command: the send sequence
+            // counter is no longer known to be in step.
+            channelState = ChannelState::Failed;
+            return std::unexpected(std::move(sent.error()));
+        }
+        const LibreSCRS::SmartCard::Internal::APDUResponse& raw = *sent;
 
-        std::vector<std::uint8_t> respBytes = raw.data;
-        respBytes.push_back(raw.sw1);
-        respBytes.push_back(raw.sw2);
-
-        // Detect external SM invalidation before attempting MAC unwrap.
+        // Detect external SM invalidation before attempting MAC unwrap: the
+        // card's own answer is the value, and the channel is finished.
         if (raw.sw1 == 0x69 && (raw.sw2 == 0x87 || raw.sw2 == 0x88)) {
             channelState = ChannelState::Failed;
             LibreSCRS::SmartCard::Internal::APDUResponse out;
@@ -117,10 +126,20 @@ public:
             return out;
         }
 
-        auto unwrapped = sm->unprotectWithSW(respBytes);
+        std::vector<std::uint8_t> respBytes = raw.data;
+        respBytes.push_back(raw.sw1);
+        respBytes.push_back(raw.sw2);
+
+        std::optional<emrtd::crypto::UnprotectResult> unwrapped;
+        try {
+            unwrapped = sm->unprotectWithSW(respBytes);
+        } catch (const std::bad_alloc&) {
+            throw;
+        } catch (...) {
+            return fail(TransportError::Kind::ChannelUnusable, "secure messaging could not unwrap the response");
+        }
         if (!unwrapped) {
-            channelState = ChannelState::Failed;
-            return makeSentinel(0x69, 0x88); // MAC verification failed; map to 6988
+            return fail(TransportError::Kind::IntegrityFailure, "the response failed the secure-messaging check");
         }
 
         LibreSCRS::SmartCard::Internal::APDUResponse out;
@@ -145,7 +164,7 @@ public:
         auto algo = keys.cipher == SmCipher::Des3 ? emrtd::crypto::SMAlgorithm::DES3 : emrtd::crypto::SMAlgorithm::AES;
         // make_unique may throw bad_alloc; the function is declared noexcept
         // so an uncaught throw would call std::terminate. Degrade to Failed
-        // state instead and let the next transmit() surface the sentinel SW.
+        // state instead and let the next transmit() report ChannelUnusable.
         sm = std::make_unique<emrtd::crypto::SecureMessaging>(std::move(cryptoKeys), algo);
         channelState = ChannelState::Open;
     } catch (...) {
@@ -153,12 +172,11 @@ public:
     }
 
 private:
-    static LibreSCRS::SmartCard::Internal::APDUResponse makeSentinel(std::uint8_t sw1, std::uint8_t sw2)
+    std::unexpected<LibreSCRS::SmartCard::TransportError> fail(LibreSCRS::SmartCard::TransportError::Kind kind,
+                                                               const char* detail)
     {
-        LibreSCRS::SmartCard::Internal::APDUResponse r;
-        r.sw1 = sw1;
-        r.sw2 = sw2;
-        return r;
+        channelState = ChannelState::Failed;
+        return std::unexpected(LibreSCRS::SmartCard::TransportError{kind, detail});
     }
 
     LibreSCRS::SmartCard::IConnection& connection;

@@ -391,7 +391,8 @@ bool driverPresent(const sc_context_t* ctx, std::string_view shortName) noexcept
     return false;
 }
 
-bool efDirAdvertisesAppletSuiteGen2(const std::function<LibreSCRS::SmartCard::Internal::APDUResponse(
+bool efDirAdvertisesAppletSuiteGen2(const std::function<std::expected<LibreSCRS::SmartCard::Internal::APDUResponse,
+                                                                      LibreSCRS::SmartCard::TransportError>(
                                         const LibreSCRS::SmartCard::Internal::APDUCommand&)>& transmit)
 {
     using LibreSCRS::SmartCard::Internal::readBinary;
@@ -401,10 +402,10 @@ bool efDirAdvertisesAppletSuiteGen2(const std::function<LibreSCRS::SmartCard::In
     // is the measured killer of a live SM channel (SW 6988 → channel Failed),
     // and this walk must never kill ANOTHER provider's tunnel.
     auto mf = transmit(selectByFileId(0x3F, 0x00, /*p2=*/0x0C));
-    if (!mf.isSuccess())
+    if (!mf || !mf->isSuccess())
         return false;
     auto dir = transmit(selectByFileId(0x2F, 0x00, /*p2=*/0x0C));
-    if (!dir.isSuccess())
+    if (!dir || !dir->isSuccess())
         return false;
 
     // READ BINARY, searching for the AppletSuiteGen2 discriminator — the
@@ -428,14 +429,16 @@ bool efDirAdvertisesAppletSuiteGen2(const std::function<LibreSCRS::SmartCard::In
     std::vector<std::uint8_t> content;
     for (std::uint16_t offset = 0; offset < 0x8000;) {
         auto chunk = transmit(readBinary(offset, /*length=*/0)); // Le=00 → up to 256 bytes
-        const std::uint16_t sw = chunk.statusWord();
-        if ((sw == 0x9000 || sw == 0x6282) && !chunk.data.empty())
-            content.insert(content.end(), chunk.data.begin(), chunk.data.end());
+        if (!chunk)
+            break; // a failed exchange ends the walk: not this card
+        const std::uint16_t sw = chunk->statusWord();
+        if ((sw == 0x9000 || sw == 0x6282) && !chunk->data.empty())
+            content.insert(content.end(), chunk->data.begin(), chunk->data.end());
         if (std::search(content.begin(), content.end(), std::begin(kAidPrefix), std::end(kAidPrefix)) != content.end())
             return true;
-        if (sw != 0x9000 || chunk.data.size() < 256)
+        if (sw != 0x9000 || chunk->data.size() < 256)
             break; // EOF (6282 / short read) or any error — do NOT read further
-        offset = static_cast<std::uint16_t>(offset + chunk.data.size());
+        offset = static_cast<std::uint16_t>(offset + chunk->data.size());
     }
     return false;
 }
@@ -569,20 +572,16 @@ ChannelRunReport runUnderChannel(LibreSCRS::SmartCard::CardSession& cardSession,
     } else if (!connection.isTransactionHeld()) {
         // Guarded on isTransactionHeld(): CardTransaction is not re-entrant and
         // an outer owner (a host that already took one) must not be nested.
-        try {
-            rawTxn.emplace(connection);
-        } catch (...) {
-            // SCardBeginTransaction fails on a removed or reset card, an
-            // unavailable reader and an exclusive claim by another process,
-            // and CardTransaction reports that by throwing. This acquisition
-            // is the operation's FIRST PC/SC touch and sits outside the try
-            // that contains fn, so an escaping exception would end the
-            // operation before it ran, and the base class would report no
-            // more than that the plugin failed. Degrade instead to what this
-            // branch did before it took an outer transaction:
-            // librescrs_opensc_bridge_lock meets the same failure on the next
-            // libopensc call and returns SC_ERROR_READER, which the caller
-            // already maps to a communication error.
+        // SCardBeginTransaction fails on a removed or reset card, an
+        // unavailable reader and an exclusive claim by another process. This
+        // acquisition is the operation's FIRST PC/SC touch, so a failure here
+        // must not end the operation before it ran. Degrade to what this
+        // branch did before it took an outer transaction:
+        // librescrs_opensc_bridge_lock meets the same failure on the next
+        // libopensc call and returns SC_ERROR_READER, which the caller
+        // already maps to a communication error.
+        if (auto began = LibreSCRS::SmartCard::Internal::CardTransaction::begin(connection)) {
+            rawTxn.emplace(std::move(*began));
         }
     }
     return runWithChannelPtr(s, channel, token, fn, [&holder, &rawTxn]() {
@@ -908,13 +907,14 @@ public:
                 // (the measured 6988 channel-killer must never fire against
                 // another provider's tunnel).
                 auto probe = [&conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) {
-                    return conn.probe(cmd);
+                    return conn.transmit(cmd);
                 };
+                // A failed exchange is "not this card", as a refusing answer is.
                 const auto resp = probe(LibreSCRS::SmartCard::Internal::selectByAID(aidBytes, /*p2=*/0x0C));
                 bool claim = false;
-                if (resp.isSuccess()) {
+                if (resp && resp->isSuccess()) {
                     claim = true;
-                } else if (resp.statusWord() == 0x6982) {
+                } else if (resp && resp->statusWord() == 0x6982) {
                     // Deferred-PACE claim, both gates mandatory: without the
                     // driver the claim would consume a CAN prompt only for
                     // the bind to fail; without the EF.DIR discriminator a
@@ -936,7 +936,9 @@ public:
             // outright with 6A86, measured on hardware, yet bind fine through
             // their emulators; the claim stays "on bind success").
             const auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aidBytes, /*p2=*/0x0C));
-            if (!resp.isSuccess() && resp.statusWord() == 0x6982) {
+            if (!resp)
+                return false;
+            if (!resp->isSuccess() && resp->statusWord() == 0x6982) {
                 auto raw = [&conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) {
                     return conn.transmit(cmd);
                 };
@@ -970,7 +972,7 @@ public:
 
             return publishClaim();
         } catch (...) {
-            // A thrown PCSCError (card yanked mid-probe) must not cross the
+            // A throw (card yanked mid-probe) must not cross the
             // plugin ABI boundary; the local shared_ptr released everything.
             return false;
         }

@@ -5,9 +5,9 @@
 
 namespace LibreSCRS::SmartCard::Internal {
 
-std::unique_ptr<PCSCConnection> openRawDiagnostic(const std::string& readerName)
+std::expected<std::unique_ptr<PCSCConnection>, TransportError> openRawDiagnostic(const std::string& readerName)
 {
-    return std::unique_ptr<PCSCConnection>(new PCSCConnection(readerName));
+    return PCSCConnection::open(readerName);
 }
 
 } // namespace LibreSCRS::SmartCard::Internal
