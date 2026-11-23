@@ -125,10 +125,50 @@ TEST_F(CoalescerHarness, AllowsInsertedAloneAcrossWindow)
 TEST_F(CoalescerHarness, IndependentReadersDoNotCoalesce)
 {
     emit(MonitorEvent::Kind::CardInserted, "Reader A");
-    emit(MonitorEvent::Kind::CardRemoved, "Reader B");
+    emit(MonitorEvent::Kind::CardInserted, "Reader B");
     waitForEvents(2);
 
     EXPECT_EQ(snapshot().size(), 2u) << "Coalescing is per-reader, not global";
+}
+
+// A CardRemoved for a reader the subscriber already believes empty changes
+// nothing, so it is not delivered -- and above all not held, where the
+// genuine CardInserted that follows would cancel against it.
+TEST_F(CoalescerHarness, ARemovedForAnEmptyReaderIsNotDelivered)
+{
+    emit(MonitorEvent::Kind::CardRemoved, "Empty Reader");
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    EXPECT_EQ(snapshot().size(), 0u);
+}
+
+// Re-enumeration after a reader is plugged back in reports the slot empty and
+// then the card already seated in it, within milliseconds. The subscriber
+// believes the reader empty, so the pair is a card ARRIVING, not a transient:
+// the CardInserted must reach it. (Dropping both left a card in a reader's
+// contact slot unknown to every client.)
+TEST_F(CoalescerHarness, RemovedThenInsertedOnAnEmptyReaderDeliversTheCard)
+{
+    emit(MonitorEvent::Kind::CardRemoved, "Replugged Reader");
+    emit(MonitorEvent::Kind::CardInserted, "Replugged Reader");
+    waitForEvents(1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+
+    const auto snap = snapshot();
+    ASSERT_EQ(snap.size(), 1u);
+    EXPECT_EQ(snap[0].kind, MonitorEvent::Kind::CardInserted);
+}
+
+// The same pair on a reader whose card the subscriber KNOWS is present is a
+// flap, and stays suppressed: nothing changes for the subscriber.
+TEST_F(CoalescerHarness, RemovedThenInsertedOnAKnownCardStaysSuppressed)
+{
+    emit(MonitorEvent::Kind::CardInserted, "Flapping Reader");
+    waitForEvents(1);
+    ASSERT_EQ(snapshot().size(), 1u);
+    emit(MonitorEvent::Kind::CardRemoved, "Flapping Reader");
+    emit(MonitorEvent::Kind::CardInserted, "Flapping Reader");
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    EXPECT_EQ(snapshot().size(), 1u) << "a removed/inserted flap on a known card reaches no subscriber";
 }
 
 TEST_F(CoalescerHarness, ReaderRemovedEvictsCoalesceState)

@@ -550,6 +550,17 @@ Notable user-visible changes per release. Format follows
 
 ### Fixed
 
+- **A card already seated in a reader that is plugged back in is reported.**
+  Re-enumeration reports the slot empty and then the card, milliseconds
+  apart, and `MonitorService` cancelled the pair as a transient flap. For a
+  reader the subscriber already believed empty the pair is a card arriving,
+  so the card stayed unknown to every client; on a dual-interface reader its
+  contact side was then left unpowered and the antenna reported the same chip
+  as a contactless card. A card-removed event for a reader the subscriber
+  already believes empty is now dropped instead of held, so the card-inserted
+  that follows is delivered. A removed/inserted flap on a card the subscriber
+  knows is present is still suppressed.
+
 - **Each PACE protocol an EF.CardAccess offers keeps its own domain
   parameters.** When a document advertised the same PACE protocol twice over
   different curves, every entry was given the parameterId of the first one,

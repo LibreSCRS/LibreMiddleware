@@ -276,6 +276,17 @@ void MonitorService::Impl::dispatch(const MonitorEvent& event)
     {
         std::scoped_lock lk(coalesceMtx);
         auto& state = coalesceState[event.readerName];
+        // A CardRemoved for a reader the subscriber already believes empty
+        // changes nothing. Holding it would be worse than useless: when a
+        // reader is plugged back in, re-enumeration reports the slot empty and
+        // then the card already seated in it within milliseconds, and the
+        // genuine CardInserted would cancel against the held Removed as if it
+        // were a transient -- leaving the card unknown to every subscriber.
+        if (!state.heldEvent.has_value() && event.kind == MonitorEvent::Kind::CardRemoved &&
+            state.lastEmittedKind != MonitorEvent::Kind::CardInserted) {
+            state.lastEventAt = now;
+            return;
+        }
         if (state.heldEvent.has_value()) {
             const bool opposite = (state.heldEvent->kind == MonitorEvent::Kind::CardInserted &&
                                    event.kind == MonitorEvent::Kind::CardRemoved) ||
