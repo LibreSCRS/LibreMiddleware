@@ -549,3 +549,111 @@ TEST(ChunkedReadTest, ReadUnderTheCapStillReturnsTheFile)
     EXPECT_EQ(body, std::vector<uint8_t>(4u, 0x41));
     EXPECT_GT(conn.history().size(), 1u);
 }
+
+// --- Chunked file reader: asks for the whole remaining file ---
+
+namespace {
+
+/// A 4-byte header (length word LE at offset 2) followed by a patterned body.
+std::vector<uint8_t> headedImage(size_t bodyLen)
+{
+    std::vector<uint8_t> image = {0x00, 0x00, static_cast<uint8_t>(bodyLen & 0xFF),
+                                  static_cast<uint8_t>((bodyLen >> 8) & 0xFF)};
+    for (size_t i = 0; i < bodyLen; ++i)
+        image.push_back(static_cast<uint8_t>((i * 7 + 3) & 0xFF));
+    return image;
+}
+
+/// Like imageResponder but a single answer carries at most `perAnswer` bytes,
+/// the way a card (or a transport that shrank the Le) answers a longer ask.
+LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection::ResponseFn shortAnswerResponder(std::vector<uint8_t> image,
+                                                                                           size_t perAnswer)
+{
+    return [image = std::move(image), perAnswer](const APDUCommand& cmd) {
+        APDUResponse resp;
+        resp.sw1 = 0x90;
+        resp.sw2 = 0x00;
+        const size_t offset = (static_cast<size_t>(cmd.p1) << 8) | cmd.p2;
+        if (offset >= image.size())
+            return resp;
+        const size_t want = cmd.le == 0 ? 256u : cmd.le;
+        const size_t have = std::min({want, perAnswer, image.size() - offset});
+        resp.data.assign(image.begin() + static_cast<ptrdiff_t>(offset),
+                         image.begin() + static_cast<ptrdiff_t>(offset + have));
+        return resp;
+    };
+}
+
+} // namespace
+
+TEST(ChunkedReadTest, KnownLengthIsAskedForInOneCommand)
+{
+    const auto image = headedImage(30000);
+    LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection conn;
+    conn.setResponder(imageResponder(image));
+
+    ChunkedReadOptions opts;
+    opts.errorPrefix = "whole";
+
+    const auto body = readChunkedFile(conn, opts);
+    EXPECT_EQ(body, std::vector<uint8_t>(image.begin() + 4, image.end()));
+    ASSERT_EQ(conn.history().size(), 2u); // header, then the whole body
+    EXPECT_EQ(conn.history()[1].le, 30000u);
+}
+
+TEST(ChunkedReadTest, ShortAnswersAdvanceByTheirOwnLength)
+{
+    const auto image = headedImage(2048);
+    LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection conn;
+    conn.setResponder(shortAnswerResponder(image, 958));
+
+    ChunkedReadOptions opts;
+    opts.errorPrefix = "short";
+
+    const auto body = readChunkedFile(conn, opts);
+    EXPECT_EQ(body, std::vector<uint8_t>(image.begin() + 4, image.end()));
+    ASSERT_EQ(conn.history().size(), 4u); // header + 958 + 958 + 132
+    EXPECT_EQ(conn.history()[1].le, 2048u);
+    EXPECT_EQ(conn.history()[2].le, 2048u - 958u);
+    EXPECT_EQ(conn.history()[3].le, 2048u - 2u * 958u);
+}
+
+TEST(ChunkedReadTest, OffsetBeyondFifteenBitsStillThrows)
+{
+    // The even-INS offset is 15 bits wide; a card that answers in pieces long
+    // enough to carry the read past it is refused rather than wrapped.
+    const auto image = headedImage(50000);
+    LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection conn;
+    conn.setResponder(shortAnswerResponder(image, 10000));
+
+    ChunkedReadOptions opts;
+    opts.errorPrefix = "wrap";
+
+    EXPECT_THROW((void)readChunkedFile(conn, opts), std::runtime_error);
+}
+
+TEST(ChunkedReadTest, FallbackLengthAppliesAfterARefusedRead)
+{
+    const auto image = headedImage(1000);
+    LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection conn;
+    auto serve = imageResponder(image);
+    conn.setResponder([&](const APDUCommand& cmd) -> decltype(serve(cmd)) {
+        if (cmd.le > 100) {
+            APDUResponse refused;
+            refused.sw1 = 0x67;
+            refused.sw2 = 0x00;
+            return refused;
+        }
+        return serve(cmd);
+    });
+
+    ChunkedReadOptions opts;
+    opts.fallbackChunkSize = 100;
+    opts.errorPrefix = "fallback";
+
+    const auto body = readChunkedFile(conn, opts);
+    EXPECT_EQ(body, std::vector<uint8_t>(image.begin() + 4, image.end()));
+    ASSERT_GE(conn.history().size(), 3u);
+    EXPECT_EQ(conn.history()[1].le, 1000u); // refused
+    EXPECT_EQ(conn.history()[2].le, 100u);
+}

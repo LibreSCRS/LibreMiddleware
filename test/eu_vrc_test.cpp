@@ -5,6 +5,9 @@
 #include <eu_vrc_types.h>
 #include <eu_vrc_card.h>
 #include <ber.h>
+#include <eu_vrc_detection.h>
+#include "apdu.h"
+#include "fake_pcsc_connection.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -341,4 +344,103 @@ TEST(EuVrcHeader, LargerBufferSameAnswer)
     ASSERT_TRUE(large.has_value());
     EXPECT_EQ(large->totalToRead, small->totalToRead);
     EXPECT_EQ(large->totalToRead, kDeclaredBody);
+}
+
+// =============================================================================
+// Read length: the file is asked for whole; a refusal drops to 100 bytes.
+// =============================================================================
+namespace {
+
+// A card holding one non-BER file (E001) of `size` bytes whose header makes
+// the reader take the NXP header-skip (body at hdr[1] + 2 = 4). Selects of
+// any other file fail; `maxLe` is the longest READ BINARY it answers.
+struct VrcChip
+{
+    std::vector<uint8_t> file;
+    size_t maxLe;
+    std::vector<size_t> askedLe; // READ BINARY lengths while E001 is the selected file
+    bool selected = false;
+
+    VrcChip(size_t size, size_t maxLe) : maxLe(maxLe)
+    {
+        file = {0x7F, 0x02, 0xFF, 0x00};
+        for (size_t i = 4; i < size; ++i)
+            file.push_back(static_cast<uint8_t>((i * 11 + 5) & 0xFF));
+    }
+
+    LibreSCRS::SmartCard::Internal::APDUResponse answer(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd)
+    {
+        using LibreSCRS::SmartCard::Internal::APDUResponse;
+        APDUResponse r;
+        r.sw1 = 0x90;
+        r.sw2 = 0x00;
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x02) {
+            selected = cmd.data.size() == 2 && cmd.data[0] == 0xE0 && cmd.data[1] == 0x01;
+            if (selected) {
+                // FCI: 62 06 81 02 <size>
+                r.data = {0x62,
+                          0x06,
+                          0x81,
+                          0x02,
+                          static_cast<uint8_t>(file.size() >> 8),
+                          static_cast<uint8_t>(file.size() & 0xFF),
+                          0x00,
+                          0x00};
+                return r;
+            }
+            r.sw1 = 0x6A;
+            r.sw2 = 0x82;
+            return r;
+        }
+        if (cmd.ins != 0xB0)
+            return r;
+        const size_t offset = (static_cast<size_t>(cmd.p1) << 8) | cmd.p2;
+        const size_t le = cmd.le == 0 ? 256 : cmd.le;
+        if (selected)
+            askedLe.push_back(le);
+        if (le > maxLe) {
+            r.sw1 = 0x67;
+            r.sw2 = 0x00;
+            return r;
+        }
+        if (offset >= file.size())
+            return r;
+        const size_t n = std::min(le, file.size() - offset);
+        r.data.assign(file.begin() + static_cast<std::ptrdiff_t>(offset),
+                      file.begin() + static_cast<std::ptrdiff_t>(offset + n));
+        return r;
+    }
+};
+
+} // namespace
+
+TEST(EuVrcRead, FileIsAskedForWhole)
+{
+    VrcChip chip(2000, 65535);
+    LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection conn;
+    conn.setResponder([&](const auto& cmd) { return chip.answer(cmd); });
+
+    euvrc::EuVrcCard card(conn);
+    const auto data = card.readCard();
+
+    EXPECT_EQ(data.signatureA, std::vector<uint8_t>(chip.file.begin() + 4, chip.file.end()));
+    ASSERT_GE(chip.askedLe.size(), 2u); // header, then the body in one command
+    EXPECT_EQ(chip.askedLe[0], 0x20u);
+    EXPECT_EQ(chip.askedLe[1], 2000u - 4u);
+}
+
+TEST(EuVrcRead, RefusedReadFallsBackToOneHundredBytes)
+{
+    VrcChip chip(2000, 100);
+    LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection conn;
+    conn.setResponder([&](const auto& cmd) { return chip.answer(cmd); });
+
+    euvrc::EuVrcCard card(conn);
+    const auto data = card.readCard();
+
+    EXPECT_EQ(data.signatureA, std::vector<uint8_t>(chip.file.begin() + 4, chip.file.end()));
+    ASSERT_GE(chip.askedLe.size(), 4u);
+    EXPECT_EQ(chip.askedLe[1], 2000u - 4u); // refused
+    EXPECT_EQ(chip.askedLe[2], 100u);
+    EXPECT_EQ(chip.askedLe[3], 100u);
 }

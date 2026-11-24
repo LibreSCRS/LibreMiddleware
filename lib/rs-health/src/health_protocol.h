@@ -30,7 +30,6 @@ inline const std::vector<uint8_t> FILE_VARIABLE_ADMIN = {0x0D, 0x04};
 
 // File header: 4 bytes; content length at bytes [2:3] as LE uint16
 constexpr uint8_t FILE_HEADER_SIZE = 4;
-constexpr uint8_t READ_CHUNK_SIZE = 0xFF;
 
 // TLV tags — document file (0D 01)
 constexpr uint16_t TAG_INSURER_NAME = 1553;

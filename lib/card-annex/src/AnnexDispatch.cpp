@@ -24,6 +24,8 @@ constexpr std::uint8_t kMfHi = 0x3F;
 constexpr std::uint8_t kMfLo = 0x00;
 constexpr std::uint8_t kEfDirHi = 0x2F;
 constexpr std::uint8_t kEfDirLo = 0x00;
+// EF.DIR is read no further than this offset.
+constexpr std::uint16_t kEfDirCeiling = 0x1000;
 
 [[nodiscard]] SC::APDUResponse dispatch(const AnnexContext& ctx, const SC::APDUCommand& cmd)
 {
@@ -88,8 +90,9 @@ private:
     // EF.DIR is a bare record list with no length header of its own, so it is
     // read in one go rather than through the header-driven chunked reader.
     std::vector<std::uint8_t> out;
-    for (std::uint16_t offset = 0; offset < 0x1000;) {
-        const auto resp = dispatch(ctx, SC::readBinary(offset, 0xFF));
+    for (std::uint16_t offset = 0; offset < kEfDirCeiling;) {
+        // Up to the loop's own ceiling: the transport fits the Le to the card.
+        const auto resp = dispatch(ctx, SC::readBinary(offset, static_cast<std::uint16_t>(kEfDirCeiling - offset)));
         if (!carriesData(resp) || resp.data.empty()) {
             break;
         }

@@ -16,8 +16,10 @@
 #include "card_reader_apollo.h"
 #include "pcsc_connection.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 using LibreSCRS::SmartCard::Internal::APDUCommand;
@@ -224,4 +226,66 @@ TEST(CardReaderApolloTest, MultiChunkBodyAssembledInOrder)
     eidcard::CardReaderApollo reader;
     auto result = reader.readFile(conn, 0x0F, 0x02);
     EXPECT_EQ(result, body);
+}
+
+namespace {
+
+// Serves READ BINARY out of `file` (header included, Apollo layout), at most
+// `perAnswer` bytes per answer, and logs what each READ BINARY asked for.
+struct ApolloChip
+{
+    std::vector<uint8_t> file;
+    size_t perAnswer;
+    std::vector<std::pair<size_t, size_t>> asked; // offset, le
+
+    ApolloChip(size_t bodyLen, size_t perAnswer) : perAnswer(perAnswer)
+    {
+        file = apolloHeader(static_cast<uint16_t>(bodyLen));
+        for (size_t i = 0; i < bodyLen; ++i)
+            file.push_back(static_cast<uint8_t>((i * 5 + 1) & 0xFF));
+    }
+
+    APDUResponse operator()(const APDUCommand& cmd)
+    {
+        if (cmd.ins != 0xB0)
+            return ok();
+        const size_t offset = (static_cast<size_t>(cmd.p1) << 8) | cmd.p2;
+        asked.emplace_back(offset, cmd.le);
+        if (offset >= file.size())
+            return ok();
+        const size_t n = std::min({static_cast<size_t>(cmd.le), perAnswer, file.size() - offset});
+        return ok({file.begin() + static_cast<std::ptrdiff_t>(offset),
+                   file.begin() + static_cast<std::ptrdiff_t>(offset + n)});
+    }
+};
+
+} // namespace
+
+TEST(CardReaderApolloTest, BodyIsAskedForWholeAndShortAnswersAreContinued)
+{
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "fake-apollo");
+    ApolloChip chip(2048, 958);
+    conn.setTransmitFilter([&](const APDUCommand& cmd) { return chip(cmd); });
+
+    eidcard::CardReaderApollo reader;
+    const auto result = reader.readFile(conn, 0x0F, 0x02);
+
+    EXPECT_EQ(result, std::vector<uint8_t>(chip.file.begin() + 6, chip.file.end()));
+    ASSERT_EQ(chip.asked.size(), 4u); // header, 958, 958, 132
+    EXPECT_EQ(chip.asked[1], (std::pair<size_t, size_t>{6, 2048}));
+    EXPECT_EQ(chip.asked[2], (std::pair<size_t, size_t>{6 + 958, 2048 - 958}));
+}
+
+TEST(CardReaderApolloTest, NoReadStartsAtTheEndOfTheFile)
+{
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "fake-apollo");
+    ApolloChip chip(1916, 958);
+    conn.setTransmitFilter([&](const APDUCommand& cmd) { return chip(cmd); });
+
+    eidcard::CardReaderApollo reader;
+    const auto result = reader.readFile(conn, 0x0F, 0x02);
+
+    EXPECT_EQ(result.size(), 1916u);
+    for (const auto& [offset, le] : chip.asked)
+        EXPECT_LT(offset, chip.file.size());
 }

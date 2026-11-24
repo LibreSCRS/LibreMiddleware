@@ -69,7 +69,7 @@ constexpr std::uint8_t kMasterFileLo = 0x00;
     opts.includeHeaderInResult = true; // the digest covers tag and length too
     opts.errorPrefix = "annex";
     opts.headerOverride = head.data;
-    opts.readChunk = [&ctx](std::uint16_t offset, std::uint8_t length) {
+    opts.readChunk = [&ctx](std::uint16_t offset, std::uint16_t length) {
         return dispatch(ctx, SC::readBinary(offset, length));
     };
     return SC::readChunkedFile(*ctx.conn, opts);

@@ -590,10 +590,6 @@ AppletInfo mapPlugin(const std::string& pluginName, LibreSCRS::SmartCard::Intern
         chunkSize = cardedge::protocol::PKI_READ_CHUNK;
     else if (pluginName == "eu-vrc")
         chunkSize = euvrc::protocol::READ_CHUNK_SMALL;
-    else if (pluginName == "health")
-        chunkSize = healthcard::protocol::READ_CHUNK_SIZE;
-    else if (pluginName == "eid")
-        chunkSize = eidcard::protocol::READ_CHUNK_SIZE;
 
     // Read each data file and populate example values
     for (auto& df : info.dataFiles) {

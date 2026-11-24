@@ -60,6 +60,8 @@ struct ScriptedPkcs15Card
     bool answersRetryProbe = false;
     std::map<std::uint8_t, int> probeTries;
     std::set<std::uint8_t> probeBlocked;
+    /// The most one READ BINARY answer carries, whatever the Le asked for.
+    std::size_t perAnswer = static_cast<std::size_t>(-1);
     /// Every APDU seen, copied by value.
     std::vector<APDUCommand> log;
 
@@ -88,7 +90,8 @@ struct ScriptedPkcs15Card
             const std::size_t offset = (static_cast<std::size_t>(cmd.p1 & 0x7F) << 8) | cmd.p2;
             if (offset >= it->second.size())
                 return {{}, 0x62, 0x82}; // EOF
-            const std::size_t n = std::min<std::size_t>(cmd.le != 0 ? cmd.le : 256, it->second.size() - offset);
+            const std::size_t n =
+                std::min({static_cast<std::size_t>(cmd.le != 0 ? cmd.le : 256), perAnswer, it->second.size() - offset});
             std::vector<std::uint8_t> chunk(it->second.begin() + static_cast<std::ptrdiff_t>(offset),
                                             it->second.begin() + static_cast<std::ptrdiff_t>(offset + n));
             return {std::move(chunk), 0x90, 0x00};

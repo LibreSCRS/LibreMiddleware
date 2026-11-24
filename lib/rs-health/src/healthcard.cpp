@@ -88,7 +88,6 @@ std::vector<uint8_t> HealthCard::readFile(const std::vector<uint8_t>& fileId)
     opts.headerSpec.headerSize = protocol::FILE_HEADER_SIZE;
     opts.headerSpec.lengthOffset = 2;
     opts.headerSpec.lengthBytes = 2;
-    opts.chunkSize = protocol::READ_CHUNK_SIZE;
     opts.errorPrefix = "Health card";
 
     return LibreSCRS::SmartCard::Internal::readChunkedFile(conn, opts);

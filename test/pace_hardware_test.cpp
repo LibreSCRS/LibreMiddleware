@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 
 using namespace emrtd::crypto;
 
@@ -79,10 +80,12 @@ namespace {
 
 // Establish a PACE-CAN channel via CardSession and return the holder + the
 // session. The holder must stay alive for the lifetime of any EMRTDCard
-// constructed from the channel; the session must outlive the holder.
+// constructed from the channel; the session must outlive the holder. The
+// session lives on the heap: the holder points at it, so it must never move
+// once the channel is activated (the fixture itself is moved on return).
 struct PaceFixture
 {
-    LibreSCRS::SmartCard::CardSession session;
+    std::unique_ptr<LibreSCRS::SmartCard::CardSession> session;
     LibreSCRS::SmartCard::ActiveChannelHolder holder;
 };
 
@@ -91,10 +94,10 @@ std::optional<PaceFixture> openPaceWithCanFixture(const std::string& reader, con
     auto sessionResult = LibreSCRS::SmartCard::CardSession::open(reader);
     if (!sessionResult.has_value())
         return std::nullopt;
-    auto session = std::move(*sessionResult);
-    session.setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Can, LibreSCRS::Secure::String{can});
+    auto session = std::make_unique<LibreSCRS::SmartCard::CardSession>(std::move(*sessionResult));
+    session->setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Can, LibreSCRS::Secure::String{can});
     LibreSCRS::SmartCard::AppletAid emrtdAid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
-    auto holderResult = session.activateChannelWithSm(
+    auto holderResult = session->activateChannelWithSm(
         emrtdAid, LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can}, LibreSCRS::CancelToken{});
     if (!holderResult)
         return std::nullopt;
@@ -115,8 +118,8 @@ TEST(PACEHardwareTest, PaceAuthenticateAndReadCOM)
 
     auto fixture = openPaceWithCanFixture(readers[0], can);
     ASSERT_TRUE(fixture.has_value()) << "PACE channel activation failed";
-    ASSERT_TRUE(fixture->holder.isActive() && fixture->session.channelState().has_value());
-    LibreSCRS::SecureChannel::SessionChannel channel(fixture->session);
+    ASSERT_TRUE(fixture->holder.isActive() && fixture->session->channelState().has_value());
+    LibreSCRS::SecureChannel::SessionChannel channel(*fixture->session);
 
     emrtd::EMRTDCard card(channel);
 
@@ -145,8 +148,8 @@ TEST(PACEHardwareTest, ReadAndParseDG1)
 
     auto fixture = openPaceWithCanFixture(readers[0], can);
     ASSERT_TRUE(fixture.has_value()) << "PACE channel activation failed";
-    ASSERT_TRUE(fixture->holder.isActive() && fixture->session.channelState().has_value());
-    LibreSCRS::SecureChannel::SessionChannel channel(fixture->session);
+    ASSERT_TRUE(fixture->holder.isActive() && fixture->session->channelState().has_value());
+    LibreSCRS::SecureChannel::SessionChannel channel(*fixture->session);
 
     emrtd::EMRTDCard card(channel);
 
@@ -194,8 +197,8 @@ TEST(PACEHardwareTest, ReadDG2Photo)
 
     auto fixture = openPaceWithCanFixture(readers[0], can);
     ASSERT_TRUE(fixture.has_value()) << "PACE channel activation failed";
-    ASSERT_TRUE(fixture->holder.isActive() && fixture->session.channelState().has_value());
-    LibreSCRS::SecureChannel::SessionChannel channel(fixture->session);
+    ASSERT_TRUE(fixture->holder.isActive() && fixture->session->channelState().has_value());
+    LibreSCRS::SecureChannel::SessionChannel channel(*fixture->session);
 
     emrtd::EMRTDCard card(channel);
 

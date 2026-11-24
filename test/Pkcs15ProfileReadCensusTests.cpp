@@ -384,6 +384,42 @@ TEST(Pkcs15ProfileReadCensus, ReadTokenInfoTouchesCardWithoutReadingTheProfile)
     EXPECT_EQ(group.groupKey, "token");
 }
 
+// Every EF is asked for whole: READ BINARY at offset 0 carries the longest Le
+// the file-size ceiling leaves, and a card that answers less is read on from
+// where its answer ended.
+TEST(Pkcs15ProfileReadCensus, FilesAreAskedForWholeAndShortAnswersAreContinued)
+{
+    auto rig = makeRig("Census Reader Whole Read");
+    std::vector<std::uint8_t> cert{0x30, 0x82, 0x07, 0xFC};
+    for (std::size_t i = 0; i < 2044; ++i)
+        cert.push_back(static_cast<std::uint8_t>((i * 13 + 7) & 0xFF));
+    rig.card->files[kCertFid] = cert;
+    rig.card->perAnswer = 958;
+
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    (void)plugin->readCertificates(*rig.session);
+
+    std::uint16_t selected = 0;
+    std::vector<std::pair<std::size_t, std::size_t>> certReads; // offset, Le
+    for (const auto& cmd : rig.card->log) {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x00 && cmd.data.size() == 2)
+            selected = static_cast<std::uint16_t>((cmd.data[0] << 8) | cmd.data[1]);
+        if (cmd.ins == 0xB0) {
+            EXPECT_NE(cmd.le, 128u) << "the fixed 128-byte chunk is gone";
+            if (selected == kCertFid)
+                certReads.emplace_back((static_cast<std::size_t>(cmd.p1) << 8) | cmd.p2, cmd.le);
+        }
+    }
+    ASSERT_GE(certReads.size(), 3u);
+    EXPECT_EQ(certReads[0].first, 0u);
+    EXPECT_EQ(certReads[0].second, 32767u);
+    EXPECT_EQ(certReads[1].first, 958u);
+    EXPECT_EQ(certReads[1].second, 32767u - 958u);
+    EXPECT_EQ(certReads[2].first, 1916u);
+}
+
 // ---------------------------------------------------------------------------
 // The census proper. Each public entry point is driven against its own
 // fresh rig, and the profile-read count is asserted. These expectations are

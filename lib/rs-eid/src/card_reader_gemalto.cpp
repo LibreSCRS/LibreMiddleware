@@ -82,7 +82,7 @@ LibreSCRS::SmartCard::Internal::APDUResponse selectAndReadHeader(LibreSCRS::Smar
 
 // READ BINARY with retry: re-select app + file, then reconnect + re-select.
 LibreSCRS::SmartCard::Internal::APDUResponse readBinaryWithRetry(LibreSCRS::SmartCard::CardConnection& conn,
-                                                                 uint16_t offset, uint8_t length, uint8_t fileId1,
+                                                                 uint16_t offset, uint16_t length, uint8_t fileId1,
                                                                  uint8_t fileId2)
 {
     auto readResp = LibreSCRS::SmartCard::Internal::orThrow(
@@ -122,10 +122,9 @@ std::vector<uint8_t> readGemaltoFile(LibreSCRS::SmartCard::CardConnection& conn,
     opts.headerSpec.lengthBytes = 2;
     opts.maxTotalBytes = 65535;
     opts.includeHeaderInResult = includeHeader;
-    opts.chunkSize = protocol::READ_CHUNK_SIZE;
     opts.errorPrefix = "Gemalto";
     opts.headerOverride = std::move(headerResp.data);
-    opts.readChunk = [&conn, fileId1, fileId2](uint16_t offset, uint8_t length) {
+    opts.readChunk = [&conn, fileId1, fileId2](uint16_t offset, uint16_t length) {
         return readBinaryWithRetry(conn, offset, length, fileId1, fileId2);
     };
 

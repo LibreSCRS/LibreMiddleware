@@ -174,3 +174,116 @@ TEST(EmrtdCardRead, ACardAnswerIsAValueNotAnError)
     ASSERT_TRUE(sod.has_value());
     EXPECT_FALSE(sod->has_value());
 }
+
+// --- The read asks for the whole remaining file ---
+
+namespace {
+
+struct AskedRead
+{
+    std::uint8_t ins;
+    std::size_t offset;
+    std::size_t le;
+};
+
+// A chip that answers as much as it is asked for, but at most `perAnswer`
+// bytes, and logs what it was asked. B1 answers wrap the data in a DO'53 whose
+// header costs up to four bytes of the Le.
+struct WideChip
+{
+    std::vector<std::uint8_t> file;
+    std::size_t perAnswer = 65535;
+    std::vector<AskedRead> asked;
+
+    explicit WideChip(std::size_t body)
+    {
+        file = {0x75, 0x83, static_cast<std::uint8_t>(body >> 16), static_cast<std::uint8_t>(body >> 8),
+                static_cast<std::uint8_t>(body & 0xFF)};
+        for (std::size_t i = 0; i < body; ++i)
+            file.push_back(static_cast<std::uint8_t>((i * 7 + i / 251) & 0xFF));
+    }
+
+    APDUResponse answer(const APDUCommand& cmd)
+    {
+        if (cmd.ins == 0xA4)
+            return APDUResponse{{}, 0x90, 0x00};
+        std::size_t offset = 0;
+        if (cmd.ins == 0xB0) {
+            offset = (static_cast<std::size_t>(cmd.p1 & 0x7F) << 8) | cmd.p2;
+        } else {
+            for (std::size_t i = 2; i < cmd.data.size(); ++i)
+                offset = (offset << 8) | cmd.data[i];
+        }
+        const std::size_t le = cmd.le == 0 ? 256 : cmd.le;
+        asked.push_back({cmd.ins, offset, le});
+        if (offset >= file.size())
+            return APDUResponse{{}, 0x6B, 0x00};
+        if (cmd.ins == 0xB0) {
+            const std::size_t n = std::min({le, perAnswer, file.size() - offset});
+            return APDUResponse{{file.begin() + static_cast<std::ptrdiff_t>(offset),
+                                 file.begin() + static_cast<std::ptrdiff_t>(offset + n)},
+                                0x90,
+                                0x00};
+        }
+        const std::size_t n = std::min({le - 4, perAnswer, file.size() - offset});
+        std::vector<std::uint8_t> wrapped{0x53, 0x82, static_cast<std::uint8_t>(n >> 8),
+                                          static_cast<std::uint8_t>(n & 0xFF)};
+        wrapped.insert(wrapped.end(), file.begin() + static_cast<std::ptrdiff_t>(offset),
+                       file.begin() + static_cast<std::ptrdiff_t>(offset + n));
+        return APDUResponse{std::move(wrapped), 0x90, 0x00};
+    }
+};
+
+auto readDg2(WideChip& chip)
+{
+    FakeChannel channel(LibreSCRS::SmartCard::AppletAid{}, ChannelState::Open, true);
+    channel.transmitHandler = [&chip](const APDUCommand& cmd) { return chip.answer(cmd); };
+    emrtd::EMRTDCard card(channel);
+    return card.readDataGroupSafe(2);
+}
+
+} // namespace
+
+TEST(EmrtdCardRead, AFileOver64KiBIsAskedForWholeThenFromTheOddIns)
+{
+    WideChip chip(70000);
+    const auto read = readDg2(chip);
+
+    ASSERT_TRUE(read.has_value());
+    ASSERT_EQ(read->status, emrtd::DGReadStatus::OK);
+    EXPECT_TRUE(read->data == chip.file);
+    ASSERT_GE(chip.asked.size(), 2u);
+    EXPECT_EQ(chip.asked[0].ins, 0xB0);
+    EXPECT_EQ(chip.asked[0].le, 65535u);
+    EXPECT_EQ(chip.asked[1].ins, 0xB1);
+    EXPECT_EQ(chip.asked[1].offset, 65535u);
+    EXPECT_EQ(chip.asked[1].le, (chip.file.size() - 65535u) + 4u); // the remaining plus the DO'53 header
+}
+
+TEST(EmrtdCardRead, ShortAnswersAreContinuedByTheirOwnLength)
+{
+    WideChip chip(2043); // file of 2048
+    chip.perAnswer = 958;
+    const auto read = readDg2(chip);
+
+    ASSERT_TRUE(read.has_value());
+    ASSERT_EQ(read->status, emrtd::DGReadStatus::OK);
+    EXPECT_TRUE(read->data == chip.file);
+    ASSERT_EQ(chip.asked.size(), 3u);
+    EXPECT_EQ(chip.asked[0].le, 65535u); // length not known before the first answer
+    EXPECT_EQ(chip.asked[1].offset, 958u);
+    EXPECT_EQ(chip.asked[1].le, 2048u - 958u);
+}
+
+TEST(EmrtdCardRead, NoReadStartsAtTheEndOfAFileOfTwoFullAnswers)
+{
+    WideChip chip(1911); // file of 1916 = 2 x 958
+    chip.perAnswer = 958;
+    const auto read = readDg2(chip);
+
+    ASSERT_TRUE(read.has_value());
+    ASSERT_EQ(read->status, emrtd::DGReadStatus::OK);
+    EXPECT_TRUE(read->data == chip.file);
+    for (const auto& a : chip.asked)
+        EXPECT_LT(a.offset, chip.file.size());
+}

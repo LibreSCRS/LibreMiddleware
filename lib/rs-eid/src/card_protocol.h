@@ -99,7 +99,4 @@ inline bool isApolloATR(const std::vector<uint8_t>& atr)
     return atr.size() >= 4 && atr[0] == 0x3B && atr[1] == 0xB9 && atr[2] == 0x18;
 }
 
-// Read chunk size for eID data files (SELECT by path, plain READ BINARY).
-constexpr uint8_t READ_CHUNK_SIZE = 0xFF; // 255 bytes per READ BINARY
-
 } // namespace eidcard::protocol

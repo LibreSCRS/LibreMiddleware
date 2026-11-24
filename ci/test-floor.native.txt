@@ -6,7 +6,7 @@ ASiCModuleTests 40
 ActivatedProtocolTests 3
 ActivationFallbackPolicyTests 3
 ActivationProfileTests 3
-AnnexTests 24
+AnnexTests 26
 AtrMatchingTests 8
 CAdESModuleTests 10
 CancellationNviTests 4
@@ -26,11 +26,11 @@ EMRTDCryptoTests 264
 EMRTDPluginTests 84
 EMRTDTests 20
 EfDirTests 3
-EmrtdCardReadTests 6
+EmrtdCardReadTests 9
 HttpClientTests 3
 JAdESModuleTests 12
 JcsTests 12
-LibreMiddlewareTests 60
+LibreMiddlewareTests 68
 LibreSCRS_AetAttestationTests 3
 LibreSCRS_AuthRequirementPaceTests 7
 LibreSCRS_AuthTests 8
@@ -86,7 +86,7 @@ Pkcs15ChangePinSelectorTests 4
 Pkcs15EcdsaSignatureTests 16
 Pkcs15PinLifecycleTests 42
 Pkcs15ProbeEfDirTests 2
-Pkcs15ProfileReadCensusTests 40
+Pkcs15ProfileReadCensusTests 43
 Pkcs15ReadTokenInfoPartialTests 2
 PluginAbiVersionTest 1
 PluginIntegrationTests 8
@@ -98,7 +98,7 @@ ProbeOrderTests 3
 ReadLengthPolicyTests 26
 RevocationClientTests 19
 RsEidCoreTests 48
-RsEidDriverTests 36
+RsEidDriverTests 39
 RsEidPluginTests 1
 SecretParameterConceptTests 1
 SecretWipeOnFreeTests 12

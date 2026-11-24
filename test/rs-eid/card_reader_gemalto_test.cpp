@@ -15,8 +15,10 @@
 #include "card_reader_gemalto.h"
 #include "pcsc_connection.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 using LibreSCRS::SmartCard::Internal::APDUCommand;
@@ -199,4 +201,66 @@ TEST(CardReaderGemaltoTest, ReadFileEmptyBodyReturnsHeaderOnlyForRaw)
     eidcard::CardReaderGemalto reader;
     auto bodyOnly = reader.readFile(conn, 0x0F, 0x02);
     EXPECT_TRUE(bodyOnly.empty());
+}
+
+namespace {
+
+// Serves READ BINARY out of `file` (header included), at most `perAnswer`
+// bytes per answer, and logs the length each READ BINARY asked for.
+struct GemaltoChip
+{
+    std::vector<uint8_t> file;
+    size_t perAnswer;
+    std::vector<std::pair<size_t, size_t>> asked; // offset, le
+
+    GemaltoChip(size_t bodyLen, size_t perAnswer) : perAnswer(perAnswer)
+    {
+        file = gemaltoHeader(static_cast<uint16_t>(bodyLen));
+        for (size_t i = 0; i < bodyLen; ++i)
+            file.push_back(static_cast<uint8_t>((i * 5 + 1) & 0xFF));
+    }
+
+    APDUResponse operator()(const APDUCommand& cmd)
+    {
+        if (cmd.ins != 0xB0)
+            return ok();
+        const size_t offset = (static_cast<size_t>(cmd.p1) << 8) | cmd.p2;
+        asked.emplace_back(offset, cmd.le);
+        if (offset >= file.size())
+            return ok();
+        const size_t n = std::min({static_cast<size_t>(cmd.le), perAnswer, file.size() - offset});
+        return ok({file.begin() + static_cast<std::ptrdiff_t>(offset),
+                   file.begin() + static_cast<std::ptrdiff_t>(offset + n)});
+    }
+};
+
+} // namespace
+
+TEST(CardReaderGemaltoTest, BodyIsAskedForWholeThroughTheRetryHook)
+{
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "fake-gemalto");
+    GemaltoChip chip(2048, 958);
+    conn.setTransmitFilter([&](const APDUCommand& cmd) { return chip(cmd); });
+
+    eidcard::CardReaderGemalto reader;
+    const auto result = reader.readFile(conn, 0x0F, 0x02);
+
+    EXPECT_EQ(result, std::vector<uint8_t>(chip.file.begin() + 4, chip.file.end()));
+    ASSERT_EQ(chip.asked.size(), 4u);                               // header, 958, 958, 132
+    EXPECT_EQ(chip.asked[1], (std::pair<size_t, size_t>{4, 2048})); // 16-bit length reaches the card
+    EXPECT_EQ(chip.asked[2], (std::pair<size_t, size_t>{4 + 958, 2048 - 958}));
+}
+
+TEST(CardReaderGemaltoTest, NoReadStartsAtTheEndOfTheFile)
+{
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "fake-gemalto");
+    GemaltoChip chip(1916, 958);
+    conn.setTransmitFilter([&](const APDUCommand& cmd) { return chip(cmd); });
+
+    eidcard::CardReaderGemalto reader;
+    const auto result = reader.readFile(conn, 0x0F, 0x02);
+
+    EXPECT_EQ(result.size(), 1916u);
+    for (const auto& [offset, le] : chip.asked)
+        EXPECT_LT(offset, chip.file.size());
 }

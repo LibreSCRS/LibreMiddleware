@@ -14,8 +14,10 @@
 #include "healthtypes.h"
 #include "pcsc_connection.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 using LibreSCRS::SmartCard::Internal::APDUCommand;
@@ -168,10 +170,70 @@ TEST(HealthProtocol, FileIdsCanonicalLayout)
     EXPECT_EQ(FILE_VARIABLE_ADMIN, (std::vector<uint8_t>{0x0D, 0x04}));
 }
 
-TEST(HealthProtocol, HeaderAndChunkSizes)
+TEST(HealthProtocol, HeaderSize)
 {
     EXPECT_EQ(healthcard::protocol::FILE_HEADER_SIZE, 4);
-    EXPECT_EQ(healthcard::protocol::READ_CHUNK_SIZE, 0xFF);
+}
+
+namespace {
+
+// Serves one file (4-byte header + body), at most `perAnswer` bytes per
+// answer, and logs the offset and length of each READ BINARY.
+struct HealthChip
+{
+    std::vector<uint8_t> file;
+    size_t perAnswer;
+    std::vector<std::pair<size_t, size_t>> asked;
+
+    HealthChip(size_t bodyLen, size_t perAnswer) : perAnswer(perAnswer)
+    {
+        file = healthHeader(static_cast<uint16_t>(bodyLen));
+        for (size_t i = 0; i < bodyLen; ++i)
+            file.push_back(0x00); // parses as no TLV at all
+    }
+
+    APDUResponse operator()(const APDUCommand& cmd)
+    {
+        if (cmd.ins != 0xB0)
+            return ok();
+        const size_t offset = (static_cast<size_t>(cmd.p1) << 8) | cmd.p2;
+        asked.emplace_back(offset, cmd.le);
+        if (offset >= file.size())
+            return ok();
+        const size_t n = std::min({static_cast<size_t>(cmd.le), perAnswer, file.size() - offset});
+        return ok({file.begin() + static_cast<std::ptrdiff_t>(offset),
+                   file.begin() + static_cast<std::ptrdiff_t>(offset + n)});
+    }
+};
+
+} // namespace
+
+TEST(HealthCardReadFile, BodyIsAskedForWholeAndShortAnswersAreContinued)
+{
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "fake-health");
+    HealthChip chip(2048, 958);
+    conn.setTransmitFilter([&](const APDUCommand& cmd) { return chip(cmd); });
+
+    healthcard::HealthCard card(conn);
+    (void)card.readDocumentData(); // four files; the first one's reads come first
+
+    ASSERT_GE(chip.asked.size(), 4u); // header, 958, 958, 132
+    EXPECT_EQ(chip.asked[1], (std::pair<size_t, size_t>{4, 2048}));
+    EXPECT_EQ(chip.asked[2], (std::pair<size_t, size_t>{4 + 958, 2048 - 958}));
+    EXPECT_EQ(chip.asked[3], (std::pair<size_t, size_t>{4 + 2 * 958, 2048 - 2 * 958}));
+}
+
+TEST(HealthCardReadFile, NoReadStartsAtTheEndOfTheFile)
+{
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "fake-health");
+    HealthChip chip(1916, 958);
+    conn.setTransmitFilter([&](const APDUCommand& cmd) { return chip(cmd); });
+
+    healthcard::HealthCard card(conn);
+    (void)card.readDocumentData();
+
+    for (const auto& [offset, le] : chip.asked)
+        EXPECT_LT(offset, chip.file.size());
 }
 
 // --- Probe path ---

@@ -50,8 +50,8 @@ std::optional<HeaderParseResult> parseHeaderFromSpec(std::span<const uint8_t> he
 
 std::vector<uint8_t> readChunkedFile(IConnection& conn, const ChunkedReadOptions& opts)
 {
-    if (opts.chunkSize == 0) {
-        throw std::runtime_error(opts.errorPrefix + ": chunkSize must be non-zero");
+    if (opts.maxRequest == 0) {
+        throw std::runtime_error(opts.errorPrefix + ": maxRequest must be non-zero");
     }
 
     const uint8_t headerSize = opts.headerSpec.headerSize;
@@ -106,15 +106,17 @@ std::vector<uint8_t> readChunkedFile(IConnection& conn, const ChunkedReadOptions
         }
     }
 
-    // Step 3: chunked READ BINARY loop.
-    uint8_t currentChunkSize = opts.chunkSize;
+    // Step 3: READ BINARY loop. Each command asks for everything still owed;
+    // the card (or the transport fitting the Le) may answer less, and the loop
+    // advances by what actually arrived.
+    uint16_t currentMaxRequest = opts.maxRequest;
     uint8_t fallback = opts.fallbackChunkSize;
     size_t bodyRead = 0;
     uint32_t offset = static_cast<uint32_t>(dataOffset);
 
     while (bodyRead < totalToRead) {
         const size_t remaining = totalToRead - bodyRead;
-        const uint8_t thisChunk = static_cast<uint8_t>(std::min(static_cast<size_t>(currentChunkSize), remaining));
+        const uint16_t thisChunk = static_cast<uint16_t>(std::min(static_cast<size_t>(currentMaxRequest), remaining));
         // The even-INS READ BINARY addresses 15 bits; past them the read
         // fails rather than wrap to the beginning of the file.
         if (offset > 0x7FFF)
@@ -126,8 +128,8 @@ std::vector<uint8_t> readChunkedFile(IConnection& conn, const ChunkedReadOptions
                                     : orThrow(conn.transmit(readBinary(static_cast<uint16_t>(offset), thisChunk)));
 
         if (!readResp.isSuccess()) {
-            if (fallback != 0 && currentChunkSize != fallback) {
-                currentChunkSize = fallback;
+            if (fallback != 0 && currentMaxRequest != fallback) {
+                currentMaxRequest = fallback;
                 fallback = 0;
                 continue;
             }

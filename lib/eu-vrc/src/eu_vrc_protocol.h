@@ -130,9 +130,8 @@ constexpr uint32_t TAG_DOC_NUMBER = 0x9F38;
 // File header size for initial read
 constexpr uint8_t FILE_HEADER_SIZE = 0x20;
 
-// Read chunk sizes
-constexpr uint8_t READ_CHUNK_LARGE = 0xFF; // 255 bytes — try first
-constexpr uint8_t READ_CHUNK_SMALL = 0x64; // 100 bytes — fallback
+// Read length to fall back to when the card refuses to be asked for the whole file
+constexpr uint8_t READ_CHUNK_SMALL = 0x64; // 100 bytes
 
 // Returns true for national extension tags (>= 0xC0, single-byte, in 71/72 containers)
 inline bool isNationalExtensionTag(uint32_t tag)

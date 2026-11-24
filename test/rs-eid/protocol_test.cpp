@@ -61,9 +61,3 @@ TEST(EidProtocolAids, SerianAidsAre11Bytes)
     EXPECT_EQ(AID_SERID[6], 'E');
     EXPECT_EQ(AID_SERID[7], 'R');
 }
-
-TEST(EidProtocolConstants, ChunkSizeIsMaxShortLe)
-{
-    // READ BINARY chunk size should be 0xFF (255 bytes) — ISO 7816-4 short form maximum.
-    EXPECT_EQ(READ_CHUNK_SIZE, 0xFF);
-}

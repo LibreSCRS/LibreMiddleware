@@ -90,7 +90,6 @@ bool rsaSignatureVerifies(std::span<const uint8_t> certDer, SignScheme scheme, c
 }
 // ISO 7816-4 READ BINARY short form: P1 bits 0–6 = offset high byte → max offset 32767.
 constexpr size_t MAX_FILE_SIZE = 32767;
-constexpr uint8_t READ_CHUNK_SIZE = 128;
 
 // AET SafeSign QSCD applet: a locked card answers SELECT AID with this prompt
 // in the response body; an unlocked card answers with empty data. Detection
@@ -1190,7 +1189,8 @@ std::vector<uint8_t> PKCS15Card::readSelectedFile()
 
     while (true) {
         auto resp = LibreSCRS::SmartCard::Internal::orThrow(
-            channel.transmit(LibreSCRS::SmartCard::Internal::readBinary(static_cast<uint16_t>(offset), READ_CHUNK_SIZE),
+            channel.transmit(LibreSCRS::SmartCard::Internal::readBinary(static_cast<uint16_t>(offset),
+                                                                        static_cast<uint16_t>(MAX_FILE_SIZE - offset)),
                              LibreSCRS::CancelToken{}));
 
         // 6282 = standard EOF; 6A86 = some tokens signal EOF this way

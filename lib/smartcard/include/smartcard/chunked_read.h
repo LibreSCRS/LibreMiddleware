@@ -59,7 +59,7 @@ struct HeaderParseResult
 
 /// Options controlling readChunkedFile behavior. The defaults match the
 /// most common case (4-byte header, LE u16 length at offset 2, no retry,
-/// 0xFF chunk size, throw on read failure, body-only result).
+/// the whole remaining file asked for, throw on read failure, body-only result).
 struct ChunkedReadOptions
 {
     /// Header layout for the default parser. Ignored if parseHeader is set.
@@ -67,10 +67,14 @@ struct ChunkedReadOptions
     /// If true, the returned vector starts with the raw header bytes
     /// followed by the body. If false, only the body is returned.
     bool includeHeaderInResult = false;
-    /// Initial READ BINARY chunk size (0x01..0xFF). 0xFF = 255 bytes.
-    uint8_t chunkSize = 0xFF;
+    /// Longest READ BINARY the loop asks for; each command asks for
+    /// min(bytes still owed, maxRequest). The transport fits the length to
+    /// what the card accepts, so this is a ceiling, not a chunk size.
+    /// 0xFFFF is the largest Le a command can carry (kept literal: the policy
+    /// header would pull lib/smartcard/src onto every consumer's include path).
+    std::uint16_t maxRequest = 0xFFFF;
     /// If non-zero, on a READ BINARY failure the loop retries once with
-    /// this smaller chunk size before giving up (matches EU VRC behavior).
+    /// this smaller ceiling before giving up (matches EU VRC behavior).
     uint8_t fallbackChunkSize = 0;
     /// Prefix used in thrown std::runtime_error messages, e.g. "Apollo".
     std::string errorPrefix = "readChunkedFile";
@@ -100,7 +104,7 @@ struct ChunkedReadOptions
     /// Allows callers to inject per-read retry/recovery (Gemalto re-select
     /// path). The callback is responsible for returning a response whose
     /// isSuccess() reflects the final outcome.
-    std::function<APDUResponse(uint16_t offset, uint8_t length)> readChunk;
+    std::function<APDUResponse(uint16_t offset, uint16_t length)> readChunk;
 };
 
 /// Generic ISO 7816-4 chunked file reader.
@@ -108,7 +112,7 @@ struct ChunkedReadOptions
 /// Steps:
 ///   1. Read the first headerSpec.headerSize bytes (or call parseHeader).
 ///   2. Determine the data offset and total body length.
-///   3. Loop READ BINARY in chunks of chunkSize (with optional fallback).
+///   3. Loop READ BINARY asking for the remaining body (with optional fallback).
 ///
 /// The caller is expected to have already performed SELECT on the target
 /// file. SELECT semantics vary too widely between card families to be
@@ -116,7 +120,7 @@ struct ChunkedReadOptions
 ///
 /// On READ BINARY failure with no fallback configured, throws
 /// std::runtime_error using errorPrefix; with fallback, retries the
-/// remaining chunks at fallbackChunkSize and returns what was read.
+/// remaining reads at fallbackChunkSize and returns what was read.
 std::vector<uint8_t> readChunkedFile(IConnection& conn, const ChunkedReadOptions& opts);
 
 } // namespace LibreSCRS::SmartCard::Internal

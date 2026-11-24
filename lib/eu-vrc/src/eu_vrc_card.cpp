@@ -150,7 +150,6 @@ std::vector<uint8_t> EuVrcCard::readFile(uint8_t fidHi, uint8_t fidLo)
     // available, otherwise from a BER tag+length walk at the data offset.
     LibreSCRS::SmartCard::Internal::ChunkedReadOptions opts;
     opts.headerSpec.headerSize = protocol::FILE_HEADER_SIZE;
-    opts.chunkSize = protocol::READ_CHUNK_LARGE;
     opts.fallbackChunkSize = protocol::READ_CHUNK_SMALL;
     opts.errorPrefix = "EU VRC";
     opts.parseHeader = [fciFileSize](std::span<const uint8_t> hdr) {

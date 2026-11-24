@@ -19,6 +19,8 @@
 #include <rs_digest_binding.h>
 #include <rs_tags.h>
 
+#include <algorithm>
+#include <limits>
 #include <map>
 #include <memory>
 #include <span>
@@ -50,6 +52,10 @@ class FakeAnnexCard
 {
 public:
     std::map<std::uint16_t, std::vector<std::uint8_t>> files;
+    /// The most one answer carries, whatever the Le asked for.
+    std::size_t perAnswer = std::numeric_limits<std::size_t>::max();
+    /// Every READ BINARY seen: offset and Le.
+    std::vector<std::pair<std::size_t, std::size_t>> reads;
 
     void install(FakePCSCConnection& conn)
     {
@@ -76,7 +82,9 @@ public:
             if (cmd.ins == 0xB0) {
                 const auto& f = files.at(selected);
                 const std::size_t off = static_cast<std::size_t>((cmd.p1 << 8) | cmd.p2);
-                const std::size_t len = std::min<std::size_t>(cmd.le, off < f.size() ? f.size() - off : 0);
+                reads.emplace_back(off, cmd.le);
+                const std::size_t len = std::min<std::size_t>(std::min<std::size_t>(cmd.le, perAnswer),
+                                                              off < f.size() ? f.size() - off : 0);
                 r.data.assign(f.begin() + static_cast<long>(off), f.begin() + static_cast<long>(off + len));
                 r.sw1 = 0x90;
                 r.sw2 = 0x00;
@@ -192,6 +200,29 @@ TEST(RsAnnexReader, EmitsDataGroupAndItsOwnVerdictGroup)
     EXPECT_EQ(textOf(groups[1].fields.at(1)), "NOT_PERFORMED");
 }
 
+// Each file is asked for whole: the first body read asks for what the container
+// header says is left, and a card that answers less is read on from there.
+TEST(RsAnnexReader, ContainerIsAskedForWholeAndShortAnswersAreContinued)
+{
+    auto card = goodCard();
+    card.perAnswer = 40;
+    const auto groups = readWith(card, annexEntry());
+
+    ASSERT_EQ(groups.size(), 2u);
+    EXPECT_EQ(textOf(groups[1].fields.at(0)), "PASSED");
+
+    // The signed object is the longest file: its body is far over one answer.
+    const auto& sod = card.files.at(0x0F1C);
+    const std::size_t body = static_cast<std::size_t>(sod[2] | (sod[3] << 8));
+    ASSERT_GT(body, 2u * 40u);
+    using Read = std::pair<std::size_t, std::size_t>;
+    const auto seen = [&card](Read r) {
+        return std::find(card.reads.begin(), card.reads.end(), r) != card.reads.end();
+    };
+    EXPECT_TRUE(seen({Core::kContainerHeaderSize, body}));
+    EXPECT_TRUE(seen({Core::kContainerHeaderSize + 40, body - 40}));
+}
+
 // The contract that protects every other card in the field.
 TEST(RsAnnexReader, MissingDedicatedFileYieldsNoGroups)
 {
@@ -260,6 +291,8 @@ class FakeCardWithEfDir
 public:
     std::map<std::uint16_t, std::vector<std::uint8_t>> files;
     std::vector<std::uint8_t> efDir;
+    /// Every READ BINARY seen: offset and Le.
+    std::vector<std::pair<std::size_t, std::size_t>> reads;
 
     void install(FakePCSCConnection& conn)
     {
@@ -297,6 +330,7 @@ public:
                     return r;
                 }
                 const std::size_t off = static_cast<std::size_t>((cmd.p1 << 8) | cmd.p2);
+                reads.emplace_back(off, cmd.le);
                 const std::size_t len = std::min<std::size_t>(cmd.le, off < src->size() ? src->size() - off : 0);
                 r.data.assign(src->begin() + static_cast<long>(off), src->begin() + static_cast<long>(off + len));
                 if (len < cmd.le) {
@@ -366,6 +400,27 @@ TEST(AnnexDispatch, FindsTheAnnexThroughEfDir)
     const auto groups = readAllAnnexes(ctx);
     ASSERT_EQ(groups.size(), 2u);
     EXPECT_EQ(groups[0].groupKey, "annex.rs.personal");
+}
+
+// EF.DIR has no length of its own, so the read asks up to the ceiling it keeps
+// for the file rather than a fixed chunk, and still ends on the first short answer.
+TEST(AnnexDispatch, EfDirIsAskedForUpToItsCeilingAndEndsOnAShortAnswer)
+{
+    auto card = cardWithAnnex();
+    FakePCSCConnection conn;
+    card.install(conn);
+    AnnexContext ctx;
+    ctx.conn = &conn;
+
+    ASSERT_EQ(readAllAnnexes(ctx).size(), 2u);
+    ASSERT_FALSE(card.reads.empty());
+    EXPECT_EQ(card.reads.front(), (std::pair<std::size_t, std::size_t>{0, 0x1000}));
+    // One read of EF.DIR: the short answer (6282) ended it.
+    std::size_t efDirReads = 0;
+    for (const auto& [off, ask] : card.reads)
+        if (ask == 0x1000)
+            ++efDirReads;
+    EXPECT_EQ(efDirReads, 1u);
 }
 
 // D7: the annex directory must not stay selected, or the next plugin on this

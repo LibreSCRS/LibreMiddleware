@@ -7,7 +7,9 @@
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <apdu.h>
 #include <ber.h>
+#include <smartcard/read_length_policy.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <utility>
@@ -18,6 +20,7 @@ namespace emrtd {
 namespace {
 
 using LibreSCRS::SmartCard::Internal::APDUCommand;
+using LibreSCRS::SmartCard::Internal::kMaxLe;
 
 // READ BINARY with the even INS addresses 15 bits of offset: bit 8 of P1
 // selects short-EF addressing. Beyond them ISO 7816-4 and ICAO 9303-10 use
@@ -25,17 +28,28 @@ using LibreSCRS::SmartCard::Internal::APDUCommand;
 constexpr std::size_t kMaxShortReadOffset = 0x7FFF;
 constexpr std::size_t kMaxFileSize = 1024 * 1024;
 
-APDUCommand readBinaryAt(std::size_t offset)
+// The DO'53 an odd-INS answer is wrapped in: a tag and up to three length octets.
+constexpr std::size_t kDo53Header = 4;
+
+// `wanted` is how many bytes of file are still owed (kMaxLe when the length
+// is not known yet); the transport fits the Le to what the card accepts.
+APDUCommand readBinaryAt(std::size_t offset, std::size_t wanted)
 {
     if (offset <= kMaxShortReadOffset)
-        return APDUCommand{0x00, 0xB0, static_cast<uint8_t>(offset >> 8), static_cast<uint8_t>(offset & 0xFF), {},
-                           0x00, true};
+        return APDUCommand{0x00,
+                           0xB0,
+                           static_cast<uint8_t>(offset >> 8),
+                           static_cast<uint8_t>(offset & 0xFF),
+                           {},
+                           static_cast<uint16_t>(std::min(wanted, kMaxLe)),
+                           true};
     std::vector<uint8_t> offsetBytes;
     for (std::size_t v = offset; v != 0; v >>= 8)
         offsetBytes.insert(offsetBytes.begin(), static_cast<uint8_t>(v & 0xFF));
     std::vector<uint8_t> data{0x54, static_cast<uint8_t>(offsetBytes.size())};
     data.insert(data.end(), offsetBytes.begin(), offsetBytes.end());
-    return APDUCommand{0x00, 0xB1, 0x00, 0x00, std::move(data), 0x00, true};
+    return APDUCommand{
+        0x00, 0xB1, 0x00, 0x00, std::move(data), static_cast<uint16_t>(std::min(wanted + kDo53Header, kMaxLe)), true};
 }
 
 // A BER length at data[pos]: its value and the bytes it takes, or nothing.
@@ -102,8 +116,8 @@ EMRTDCard::FileRead EMRTDCard::readFile(uint16_t fid, bool skipSelect)
             return std::nullopt;
     }
 
-    // READ BINARY in chunks of up to 256 bytes until the length the file's
-    // own TLV header declares has been read. Every answer is checked: a file
+    // READ BINARY, each asking for the rest of the file, until the length the
+    // file's own TLV header declares has been read. Every answer is checked: a file
     // cut short by an error, or by an end of file before its declared end,
     // is no file.
     std::vector<uint8_t> fileData;
@@ -112,7 +126,8 @@ EMRTDCard::FileRead EMRTDCard::readFile(uint16_t fid, bool skipSelect)
     while (true) {
         const std::size_t offset = fileData.size();
         const bool beyondShortOffset = offset > kMaxShortReadOffset;
-        auto answer = channel.transmit(readBinaryAt(offset), LibreSCRS::CancelToken{});
+        const std::size_t wanted = totalLength > offset ? totalLength - offset : kMaxLe;
+        auto answer = channel.transmit(readBinaryAt(offset, wanted), LibreSCRS::CancelToken{});
         if (!answer)
             return std::unexpected(answer.error());
         auto& resp = *answer;

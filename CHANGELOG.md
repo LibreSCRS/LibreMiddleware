@@ -7,6 +7,15 @@ Notable user-visible changes per release. Format follows
 
 ### Added
 
+- **Large card files are read with extended-length READ BINARY when the card
+  supports it.** Photos, SOD and certificates no longer go through many short
+  256-byte reads. Before PACE the card's declared limit is read from EF.ATR/INFO;
+  without secure messaging the first long read probes the extended encoding.
+  Nothing is sent at connect and no plain command is sent while secure messaging
+  is established; short APDUs are used when the card refuses or declares less. `CardSession::transmit`
+  fits a READ BINARY's Le to what the card accepts, including under secure
+  messaging, and repeats once with a shorter Le if the card refuses.
+
 - **Test support for projects built on LibreSCRS:
   `LibreSCRS::SmartCardTesting`** (`<LibreSCRS/SmartCard/testing/CardSessionTesting.h>`).
   A static archive in the development files with

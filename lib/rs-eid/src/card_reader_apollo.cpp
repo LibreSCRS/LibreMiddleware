@@ -35,7 +35,6 @@ std::vector<uint8_t> readApolloFile(LibreSCRS::SmartCard::CardConnection& conn, 
     opts.headerSpec.emptyMarkerValue = 0xFF;
     opts.maxTotalBytes = 64 * 1024; // 64KB reasonable max for eID files
     opts.includeHeaderInResult = includeHeader;
-    opts.chunkSize = protocol::READ_CHUNK_SIZE;
     opts.errorPrefix = "Apollo";
 
     return LibreSCRS::SmartCard::Internal::readChunkedFile(conn, opts);
