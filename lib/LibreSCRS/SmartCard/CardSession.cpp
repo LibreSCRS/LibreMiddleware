@@ -881,6 +881,7 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
     std::vector<LibreSCRS::SecureChannel::PaceSecurityInfo> paceInfos;
     if (!isBac) {
         bool definitivelyNoPace = false;
+        bool readReachedItsEnd = false;
         try {
             const auto read =
                 LibreSCRS::SmartCard::Internal::readCardAccessDetailed(d->activeChannel.get(), *d->ownedConn, token);
@@ -890,6 +891,7 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                 return std::unexpected{LibreSCRS::SmartCard::Internal::activationErrorFor(
                     *read.transportError, LibreSCRS::SmartCard::Internal::ActivationStep::Other)};
             }
+            readReachedItsEnd = read.readReachedEnd;
             paceInfos = LibreSCRS::SecureChannel::parsePaceOidsFromCardAccess(read.data);
             definitivelyNoPace =
                 read.efDefinitivelyAbsent || (read.readSucceeded && !read.data.empty() && read.data[0] == 0x31 &&
@@ -900,6 +902,16 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
         }
         if (definitivelyNoPace) {
             return std::unexpected{ChannelActivationError::PaceUnsupported};
+        }
+        // Any secure-messaging channel of this session was closed above and the
+        // plain read just ran to its end, so one more plain command cannot break
+        // a session: ask the card what Le it accepts before PACE starts one.
+        // Never later, never for BAC.
+        if (readReachedItsEnd) {
+            if (token.isCancellable() && token.isCancelled()) {
+                return std::unexpected{ChannelActivationError::Cancelled};
+            }
+            d->ownedConn->learnReadLengthBeforeSm();
         }
     }
 

@@ -42,6 +42,7 @@
 
 #include <apdu.h>
 #include <smartcard/i_connection.h>
+#include <smartcard/read_length_policy.h>
 #include <LibreSCRS_internal/SmartCard/ChannelDispatch.h>
 
 #include <LibreSCRS/SmartCard/TransportError.h>
@@ -67,6 +68,11 @@ struct CardAccessReadResult
     /// A READ BINARY was issued at the MF-selected EF.CardAccess and
     /// returned success (90 00). @ref data then holds its bytes.
     bool readSucceeded = false;
+    /// The master file and EF.CardAccess were selected and the READ BINARY
+    /// answered 9000 or 6282 (end of file reached): the plain read ran to its
+    /// end, so no secure-messaging session was in the way. Wider than
+    /// @ref readSucceeded, which stays 9000 only for the PACE verdicts.
+    bool readReachedEnd = false;
     /// The reader failed to carry one of the exchanges. Set, every flag above
     /// is @c false and @ref data is empty; the caller reads it BEFORE
     /// classifying, because "could not read" is not "the document has no
@@ -141,6 +147,7 @@ readCardAccessDetailed(LibreSCRS::SecureChannel::ISecureChannel* activeChannel, 
         if (!read)
             return failed(std::move(read.error()));
         result.readSucceeded = read->isSuccess();
+        result.readReachedEnd = isReadSuccess(*read);
         result.data = std::move(read->data);
         return result;
     } catch (...) {

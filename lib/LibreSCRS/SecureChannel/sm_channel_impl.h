@@ -9,14 +9,17 @@
 
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
+#include <LibreSCRS/Logging.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 
 #include "apdu.h"
 #include <smartcard/i_connection.h>
+#include <smartcard/read_length_policy.h>
 #include <smartcard/secure_buffer.h>
 
 #include "secure_messaging.h"
 
+#include <algorithm>
 #include <expected>
 #include <memory>
 #include <new>
@@ -38,7 +41,7 @@ class SmChannelBody
 {
 public:
     SmChannelBody(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::SmartCard::AppletAid aid, SessionKeys keys)
-        : connection(connection), appletAid(std::move(aid))
+        : connection(connection), appletAid(std::move(aid)), cipherBlock(blockSizeOf(keys.cipher))
     {
         // Buffer → std::vector copy at the boundary: emrtd::crypto's
         // SessionKeys consumes vectors directly through its own cleansing
@@ -83,6 +86,79 @@ public:
                 TransportError{TransportError::Kind::Cancelled, "cancelled before the command was sent"});
         }
 
+        namespace Internal = LibreSCRS::SmartCard::Internal;
+        if (!Internal::isReadBinary(cmd)) {
+            return exchange(cmd);
+        }
+
+        // The channel fits the length before protecting it: the card sees only
+        // the protected frame, and the outer Le of an extended frame is 0000.
+        // It never probes; a card that has not said what it accepts under
+        // secure messaging is asked for at most 256.
+        Internal::ReadLengthPolicy* const policy = connection.readLengthPolicy();
+        const std::size_t allowed = policy != nullptr ? policy->allowedLe(cipherBlock) : Internal::kShortLe;
+        const std::size_t fitted = std::min(Internal::requestedLe(cmd), allowed);
+        Internal::APDUCommand fittedCmd = cmd;
+        fittedCmd.le = static_cast<std::uint16_t>(fitted);
+        LibreSCRS::log::tracef(LibreSCRS::log::TraceChannel::Pcsc,
+                               "[PCSC_TRACE] secure messaging READ BINARY inner Le={}", fitted);
+
+        auto answer = exchange(fittedCmd);
+        if (fitted <= Internal::kShortLe) {
+            return answer;
+        }
+        if (!answer) {
+            // A reader or card that cannot carry the long frame: later channels
+            // on this connection read short. The channel has failed already.
+            if (policy != nullptr) {
+                policy->demoteToShort();
+            }
+            return answer;
+        }
+        if (answer->sw1 == 0x67 && channelState == ChannelState::Open) {
+            // Protected "wrong length": for this file, not for the card, so
+            // the state stays and only this command is repeated short.
+            fittedCmd.le = Internal::kShortLe;
+            return exchange(fittedCmd);
+        }
+        return answer;
+    }
+
+    void close() noexcept
+    {
+        sm.reset(); // zeroises keys via SecureMessaging dtor
+        channelState = ChannelState::Closed;
+    }
+
+    void replaceKeys(SessionKeys keys) noexcept
+    try {
+        emrtd::crypto::SessionKeys cryptoKeys;
+        cryptoKeys.encKey.assign(keys.encKey.data(), keys.encKey.data() + keys.encKey.size());
+        cryptoKeys.macKey.assign(keys.macKey.data(), keys.macKey.data() + keys.macKey.size());
+        cryptoKeys.ssc.assign(keys.ssc.data(), keys.ssc.data() + keys.ssc.size());
+        auto algo = keys.cipher == SmCipher::Des3 ? emrtd::crypto::SMAlgorithm::DES3 : emrtd::crypto::SMAlgorithm::AES;
+        // make_unique may throw bad_alloc; the function is declared noexcept
+        // so an uncaught throw would call std::terminate. Degrade to Failed
+        // state instead and let the next transmit() report ChannelUnusable.
+        sm = std::make_unique<emrtd::crypto::SecureMessaging>(std::move(cryptoKeys), algo);
+        cipherBlock = blockSizeOf(keys.cipher);
+        channelState = ChannelState::Open;
+    } catch (...) {
+        channelState = ChannelState::Failed;
+    }
+
+private:
+    static std::size_t blockSizeOf(SmCipher cipher) noexcept
+    {
+        return cipher == SmCipher::Des3 ? 8 : 16;
+    }
+
+    // One protected exchange: wrap, send, check, unwrap. Takes the command as
+    // it is to go (the length is already fitted).
+    [[nodiscard]] std::expected<LibreSCRS::SmartCard::Internal::APDUResponse, LibreSCRS::SmartCard::TransportError>
+    exchange(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd)
+    {
+        using LibreSCRS::SmartCard::TransportError;
         // SecureBuffer adoption: the plaintext serialization may carry
         // PIN/PUK bytes (PIN verbs through an SM channel), so it is
         // cleansed on every exit path. `wrapped` is SM ciphertext and
@@ -149,29 +225,6 @@ public:
         return out;
     }
 
-    void close() noexcept
-    {
-        sm.reset(); // zeroises keys via SecureMessaging dtor
-        channelState = ChannelState::Closed;
-    }
-
-    void replaceKeys(SessionKeys keys) noexcept
-    try {
-        emrtd::crypto::SessionKeys cryptoKeys;
-        cryptoKeys.encKey.assign(keys.encKey.data(), keys.encKey.data() + keys.encKey.size());
-        cryptoKeys.macKey.assign(keys.macKey.data(), keys.macKey.data() + keys.macKey.size());
-        cryptoKeys.ssc.assign(keys.ssc.data(), keys.ssc.data() + keys.ssc.size());
-        auto algo = keys.cipher == SmCipher::Des3 ? emrtd::crypto::SMAlgorithm::DES3 : emrtd::crypto::SMAlgorithm::AES;
-        // make_unique may throw bad_alloc; the function is declared noexcept
-        // so an uncaught throw would call std::terminate. Degrade to Failed
-        // state instead and let the next transmit() report ChannelUnusable.
-        sm = std::make_unique<emrtd::crypto::SecureMessaging>(std::move(cryptoKeys), algo);
-        channelState = ChannelState::Open;
-    } catch (...) {
-        channelState = ChannelState::Failed;
-    }
-
-private:
     std::unexpected<LibreSCRS::SmartCard::TransportError> fail(LibreSCRS::SmartCard::TransportError::Kind kind,
                                                                const char* detail)
     {
@@ -183,6 +236,7 @@ private:
     LibreSCRS::SmartCard::AppletAid appletAid;
     std::unique_ptr<emrtd::crypto::SecureMessaging> sm;
     ChannelState channelState = ChannelState::Open;
+    std::size_t cipherBlock; // 8 for 3DES, 16 for AES: sizes the protected answer
 };
 
 class PaceChannelImpl : public SmChannelBody

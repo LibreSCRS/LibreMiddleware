@@ -27,12 +27,19 @@
 #include <LibreSCRS/SmartCard/AppletAid.h>
 
 #include "apdu.h"
+#include "chip_auth_card_oracle.h"
 #include "fake_pcsc_connection.h"
+#include <LibreSCRS/Logging.h>
+#include <smartcard/read_length_policy.h>
 
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstdlib>
 #include <ios>
+#include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace {
@@ -433,4 +440,280 @@ TEST(SecureChannelParsePaceOids, EmptyInputYieldsEmptyList)
 {
     auto pairs = LibreSCRS::SecureChannel::parsePaceOidsFromCardAccess({});
     EXPECT_TRUE(pairs.empty());
+}
+
+// ---- READ BINARY length under secure messaging ----------------------------
+
+namespace {
+
+using LibreSCRS::SmartCard::Internal::ReadLengthPolicy;
+using LibreSCRS::SmartCard::Internal::ReadLengthState;
+using LibreSCRS::Test::AesSmCardOracle;
+
+APDUCommand readBinary(std::uint16_t le)
+{
+    return APDUCommand{0x00, 0xB0, 0x00, 0x00, {}, le, true};
+}
+
+// The Le in DO'97 of a wrapped command frame: what the card is asked for
+// inside the protection. Empty when the frame carries no DO'97.
+std::optional<std::size_t> innerLe(const std::vector<std::uint8_t>& frame)
+{
+    std::size_t pos = 4;
+    if (pos >= frame.size()) {
+        return std::nullopt;
+    }
+    pos += frame[pos] == 0x00 ? 3 : 1;
+    while (pos + 2 <= frame.size()) {
+        const std::uint8_t tag = frame[pos];
+        const std::size_t len = frame[pos + 1];
+        if (tag == 0x97) {
+            std::size_t value = 0;
+            for (std::size_t i = 0; i < len; ++i) {
+                value = (value << 8) | frame[pos + 2 + i];
+            }
+            return len == 1 && value == 0 ? 256 : value;
+        }
+        if (len >= 0x80) {
+            return std::nullopt; // not a frame this helper reads
+        }
+        pos += 2 + len;
+    }
+    return std::nullopt;
+}
+
+std::vector<std::uint8_t> bytesOf(std::uint8_t v, std::size_t n)
+{
+    return std::vector<std::uint8_t>(n, v);
+}
+
+std::shared_ptr<AesSmCardOracle> makeOracle()
+{
+    return std::make_shared<AesSmCardOracle>(bytesOf(0x11, 16), bytesOf(0x22, 16), bytesOf(0x00, 16));
+}
+
+void answerFrom(FakePCSCConnection& conn, std::shared_ptr<AesSmCardOracle> oracle,
+                AesSmCardOracle::CommandHandler handler = {})
+{
+    conn.setResponder(
+        [&conn, oracle, handler](const APDUCommand&) { return oracle->respond(conn.rawHistory().back(), handler); });
+}
+
+class SmReadLengthTests : public ::testing::Test
+{
+protected:
+    void TearDown() override
+    {
+        ::unsetenv("LIBRESCRS_PCSC_TRACE");
+        LibreSCRS::log::resetForTest();
+    }
+
+    FakePCSCConnection conn;
+    ReadLengthPolicy policy;
+};
+
+} // namespace
+
+TEST_F(SmReadLengthTests, AnUntestedCardIsAskedForNoMoreThanTheShortLength)
+{
+    conn.setReadLengthPolicy(&policy);
+    answerFrom(conn, makeOracle());
+    PaceChannel channel(conn, makeNamEmrtdAid(), makeFakeAesKeys());
+    ASSERT_TRUE(channel.transmit(readBinary(20000), CancelToken{}).has_value());
+    EXPECT_EQ(innerLe(conn.rawHistory().back()), 256u);
+    EXPECT_EQ(policy.state(), ReadLengthState::Untested) << "the channel never probes";
+}
+
+TEST_F(SmReadLengthTests, AnAcceptedCardIsStillAskedForNoMoreThanTheShortLength)
+{
+    conn.setReadLengthPolicy(&policy);
+    policy.learn(ReadLengthState::Untested);
+    policy.markAccepted();
+    answerFrom(conn, makeOracle());
+    PaceChannel channel(conn, makeNamEmrtdAid(), makeFakeAesKeys());
+    ASSERT_TRUE(channel.transmit(readBinary(20000), CancelToken{}).has_value());
+    EXPECT_EQ(innerLe(conn.rawHistory().back()), 256u);
+    EXPECT_EQ(policy.state(), ReadLengthState::Accepted);
+}
+
+TEST_F(SmReadLengthTests, ADeclaredCardOnAesIsAskedForWhatFitsItsResponse)
+{
+    conn.setReadLengthPolicy(&policy);
+    policy.learn(ReadLengthState::Declared, 960);
+    answerFrom(conn, makeOracle());
+    PaceChannel channel(conn, makeNamEmrtdAid(), makeFakeAesKeys());
+    ASSERT_TRUE(channel.transmit(readBinary(20000), CancelToken{}).has_value());
+    EXPECT_EQ(innerLe(conn.rawHistory().back()), 927u);
+}
+
+TEST_F(SmReadLengthTests, ADeclaredCardOnDes3IsAskedForWhatFitsItsResponse)
+{
+    conn.setReadLengthPolicy(&policy);
+    policy.learn(ReadLengthState::Declared, 960);
+    BacChannel channel(conn, makeNamEmrtdAid(), makeFakeDes3Keys());
+    // The answer is irrelevant (the fake card sends no valid frame): only the inner Le asked for is checked.
+    (void)channel.transmit(readBinary(20000), CancelToken{});
+    EXPECT_EQ(innerLe(conn.rawHistory().back()), 935u);
+}
+
+TEST_F(SmReadLengthTests, ReplacingDes3KeysWithAesKeysChangesTheBlockSize)
+{
+    conn.setReadLengthPolicy(&policy);
+    policy.learn(ReadLengthState::Declared, 960);
+    answerFrom(conn, makeOracle());
+    PaceChannel channel(conn, makeNamEmrtdAid(), makeFakeDes3Keys());
+    LibreSCRS::SecureChannel::detail::ChannelStateMutator::replaceKeys(channel, makeFakeAesKeys());
+    ASSERT_TRUE(channel.transmit(readBinary(20000), CancelToken{}).has_value());
+    EXPECT_EQ(innerLe(conn.rawHistory().back()), 927u);
+}
+
+TEST_F(SmReadLengthTests, ARequestBelowTheLimitIsNotRaised)
+{
+    conn.setReadLengthPolicy(&policy);
+    policy.learn(ReadLengthState::Declared, 960);
+    answerFrom(conn, makeOracle());
+    PaceChannel channel(conn, makeNamEmrtdAid(), makeFakeAesKeys());
+    ASSERT_TRUE(channel.transmit(readBinary(100), CancelToken{}).has_value());
+    EXPECT_EQ(innerLe(conn.rawHistory().back()), 100u);
+}
+
+TEST_F(SmReadLengthTests, AConnectionWithoutAPolicyIsAskedForNoMoreThanTheShortLength)
+{
+    answerFrom(conn, makeOracle());
+    PaceChannel channel(conn, makeNamEmrtdAid(), makeFakeAesKeys());
+    ASSERT_TRUE(channel.transmit(readBinary(20000), CancelToken{}).has_value());
+    EXPECT_EQ(innerLe(conn.rawHistory().back()), 256u);
+}
+
+TEST_F(SmReadLengthTests, ACommandThatIsNotAReadBinaryIsNotShortened)
+{
+    conn.setReadLengthPolicy(&policy);
+    answerFrom(conn, makeOracle());
+    PaceChannel channel(conn, makeNamEmrtdAid(), makeFakeAesKeys());
+    APDUCommand getData{0x00, 0xCA, 0x00, 0x00, {}, 20000, true};
+    ASSERT_TRUE(channel.transmit(getData, CancelToken{}).has_value());
+    EXPECT_EQ(innerLe(conn.rawHistory().back()), 20000u);
+}
+
+TEST_F(SmReadLengthTests, AReaderErrorOnALongCommandDemotesTheConnection)
+{
+    conn.setReadLengthPolicy(&policy);
+    policy.learn(ReadLengthState::Declared, 960);
+    conn.setResponder([](const APDUCommand&) {
+        return std::unexpected(TransportError{TransportError::Kind::ProtocolError, "reader lost the card"});
+    });
+    PaceChannel channel(conn, makeNamEmrtdAid(), makeFakeAesKeys());
+    auto answer = channel.transmit(readBinary(20000), CancelToken{});
+    ASSERT_FALSE(answer.has_value());
+    EXPECT_EQ(answer.error().kind, TransportError::Kind::ProtocolError);
+    EXPECT_EQ(channel.state(), ChannelState::Failed);
+    EXPECT_EQ(conn.rawHistory().size(), 1u) << "no retry";
+    EXPECT_EQ(policy.state(), ReadLengthState::Short);
+
+    conn.setResponder({});
+    PaceChannel next(conn, makeNamEmrtdAid(), makeFakeAesKeys());
+    (void)next.transmit(readBinary(20000), CancelToken{});
+    EXPECT_LE(innerLe(conn.rawHistory().back()).value_or(0), 256u);
+}
+
+TEST_F(SmReadLengthTests, AnUnprotected6700OnALongCommandDemotesTheConnection)
+{
+    conn.setReadLengthPolicy(&policy);
+    policy.learn(ReadLengthState::Declared, 960);
+    conn.setResponder([](const APDUCommand&) { return makeRaw(0x67, 0x00); });
+    PaceChannel channel(conn, makeNamEmrtdAid(), makeFakeAesKeys());
+    auto answer = channel.transmit(readBinary(20000), CancelToken{});
+    ASSERT_FALSE(answer.has_value());
+    EXPECT_EQ(answer.error().kind, TransportError::Kind::IntegrityFailure);
+    EXPECT_EQ(channel.state(), ChannelState::Failed);
+    EXPECT_EQ(conn.rawHistory().size(), 1u) << "no retry";
+    EXPECT_EQ(policy.state(), ReadLengthState::Short);
+
+    PaceChannel next(conn, makeNamEmrtdAid(), makeFakeAesKeys());
+    (void)next.transmit(readBinary(20000), CancelToken{});
+    EXPECT_LE(innerLe(conn.rawHistory().back()).value_or(0), 256u);
+}
+
+TEST_F(SmReadLengthTests, AFailureOnAShortCommandLeavesTheStateAlone)
+{
+    conn.setReadLengthPolicy(&policy);
+    policy.learn(ReadLengthState::Declared, 960);
+    conn.setResponder([](const APDUCommand&) { return makeRaw(0x67, 0x00); });
+    PaceChannel channel(conn, makeNamEmrtdAid(), makeFakeAesKeys());
+    ASSERT_FALSE(channel.transmit(readBinary(100), CancelToken{}).has_value());
+    EXPECT_EQ(policy.state(), ReadLengthState::Declared);
+}
+
+TEST_F(SmReadLengthTests, AProtected6700IsRetriedShortAndTheStateStays)
+{
+    conn.setReadLengthPolicy(&policy);
+    policy.learn(ReadLengthState::Declared, 960);
+    int calls = 0;
+    answerFrom(conn, makeOracle(),
+               [&calls](std::uint8_t, std::uint8_t, std::uint8_t, const std::vector<std::uint8_t>&) {
+                   APDUResponse a;
+                   if (++calls == 1) {
+                       a.sw1 = 0x67;
+                       a.sw2 = 0x00;
+                   } else {
+                       a.data = {0xDE, 0xAD};
+                       a.sw1 = 0x90;
+                       a.sw2 = 0x00;
+                   }
+                   return a;
+               });
+    PaceChannel channel(conn, makeNamEmrtdAid(), makeFakeAesKeys());
+
+    auto answer = channel.transmit(readBinary(20000), CancelToken{});
+    ASSERT_TRUE(answer.has_value());
+    EXPECT_EQ(answer->statusWord(), 0x9000) << "the caller sees the second answer";
+    EXPECT_EQ(answer->data, (std::vector<std::uint8_t>{0xDE, 0xAD}));
+    ASSERT_EQ(conn.rawHistory().size(), 2u);
+    EXPECT_EQ(innerLe(conn.rawHistory()[0]), 927u);
+    EXPECT_EQ(innerLe(conn.rawHistory()[1]), 256u);
+    EXPECT_EQ(channel.state(), ChannelState::Open);
+    EXPECT_EQ(policy.state(), ReadLengthState::Declared);
+
+    ASSERT_TRUE(channel.transmit(readBinary(20000), CancelToken{}).has_value());
+    EXPECT_EQ(innerLe(conn.rawHistory().back()), 927u) << "the next command asks for the full length again";
+}
+
+TEST_F(SmReadLengthTests, AShortCommandThatGets67xxIsNotRetried)
+{
+    conn.setReadLengthPolicy(&policy);
+    policy.learn(ReadLengthState::Declared, 960);
+    answerFrom(conn, makeOracle(), [](std::uint8_t, std::uint8_t, std::uint8_t, const std::vector<std::uint8_t>&) {
+        APDUResponse a;
+        a.sw1 = 0x67;
+        a.sw2 = 0x00;
+        return a;
+    });
+    PaceChannel channel(conn, makeNamEmrtdAid(), makeFakeAesKeys());
+    auto answer = channel.transmit(readBinary(100), CancelToken{});
+    ASSERT_TRUE(answer.has_value());
+    EXPECT_EQ(answer->statusWord(), 0x6700);
+    EXPECT_EQ(conn.rawHistory().size(), 1u);
+}
+
+TEST_F(SmReadLengthTests, TheTraceNamesTheInnerLe)
+{
+    ::setenv("LIBRESCRS_PCSC_TRACE", "1", 1);
+    LibreSCRS::log::resetForTest();
+    std::vector<std::string> lines;
+    LibreSCRS::log::init([&lines](LibreSCRS::log::Level level, std::string_view line) {
+        if (level == LibreSCRS::log::Level::Trace) {
+            lines.emplace_back(line);
+        }
+    });
+    conn.setReadLengthPolicy(&policy);
+    policy.learn(ReadLengthState::Declared, 960);
+    answerFrom(conn, makeOracle());
+    PaceChannel channel(conn, makeNamEmrtdAid(), makeFakeAesKeys());
+    ASSERT_TRUE(channel.transmit(readBinary(20000), CancelToken{}).has_value());
+
+    bool found = false;
+    for (const auto& line : lines) {
+        found = found || (line.find("[PCSC_TRACE]") != std::string::npos && line.find("927") != std::string::npos);
+    }
+    EXPECT_TRUE(found);
 }

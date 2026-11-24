@@ -330,7 +330,10 @@ struct CtkCard::Impl
         }
         fresh.allowedProtocols = TKSmartCardProtocolT1 | TKSmartCardProtocolT0;
         // Set before the session, which is when they are read.
-        fresh.useExtendedLength = slot.maxInputLength > 261 || slot.maxOutputLength > 258;
+        // Always on: the slot's advertised limit is wrong for some readers (a
+        // Gemalto says 261 and carries 3072). Whether a card accepts a long Le is
+        // learned just before secure messaging starts, not read from the slot.
+        fresh.useExtendedLength = YES;
         fresh.useCommandChaining = NO;
 
         auto pending = std::make_shared<Pending>();

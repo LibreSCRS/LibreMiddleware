@@ -13,6 +13,7 @@ add_library(SmartCard_Impl STATIC
     src/ber.cpp
     src/date_format.cpp
     src/chunked_read.cpp
+    src/read_length_policy.cpp
     src/monitor.cpp
     src/secure_wipe.cpp
     src/ef_dir.cpp
@@ -47,6 +48,9 @@ add_library(SmartCard_Impl STATIC
     # LIBRESCRS_INTERNAL_BUILD consumers reach it via <smartcard/...>
     # without each adding lib/smartcard/src to their include path.
     include/smartcard/chunked_read.h
+    # Internal per-connection read-length policy, LIBRESCRS_INTERNAL_BUILD-gated;
+    # it names APDUCommand, so consumers also carry lib/smartcard/src.
+    include/smartcard/read_length_policy.h
 )
 
 target_compile_definitions(SmartCard_Impl PRIVATE LIBRESCRS_INTERNAL_BUILD)

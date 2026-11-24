@@ -65,8 +65,8 @@ APDUCommand selectByAID(const std::vector<uint8_t>& aid, uint8_t p2 = 0x00);
 APDUCommand selectByPath(uint8_t fileId1, uint8_t fileId2, uint8_t le = 4);
 APDUCommand selectByFileId(uint8_t fileId1, uint8_t fileId2, uint8_t p2 = 0x00);
 // Throws std::invalid_argument for an offset past 0x7FFF, which the even INS
-// cannot address.
-APDUCommand readBinary(uint16_t offset, uint8_t length);
+// cannot address. A length of 0 asks for 256 bytes, one above 256 is extended.
+APDUCommand readBinary(uint16_t offset, uint16_t length);
 
 // PIN management commands (ISO 7816-4)
 APDUCommand verifyPIN(uint8_t pinRef, std::span<const uint8_t> pin);

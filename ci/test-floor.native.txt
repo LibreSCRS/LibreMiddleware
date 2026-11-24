@@ -17,7 +17,7 @@ CardSessionByteTransportTest 46
 CardSessionOpenTests 4
 CrossBackendTests 1
 CrossProviderCoordinationTests 7
-CtkConnectionTests 18
+CtkConnectionTests 36
 CtkScanProviderTests 15
 DecipherTypesTest 3
 DocpParserTests 4
@@ -30,12 +30,12 @@ EmrtdCardReadTests 6
 HttpClientTests 3
 JAdESModuleTests 12
 JcsTests 12
-LibreMiddlewareTests 59
+LibreMiddlewareTests 60
 LibreSCRS_AetAttestationTests 3
 LibreSCRS_AuthRequirementPaceTests 7
 LibreSCRS_AuthTests 8
 LibreSCRS_CancelTokenTests 10
-LibreSCRS_CardSessionTests 23
+LibreSCRS_CardSessionTests 31
 LibreSCRS_CardTransactionTests 5
 LibreSCRS_ChipAuthChannelTests 4
 LibreSCRS_ChipAuthCryptoTests 11
@@ -50,7 +50,7 @@ LibreSCRS_SecureAllocatorTests 3
 LibreSCRS_SecureBufferTests 5
 LibreSCRS_SecureStringTests 22
 LibreSCRS_SigningTests 46
-LibreSCRS_SmChannelTests 21
+LibreSCRS_SmChannelTests 35
 LibreSignTests 4
 LocalizedTextFactoriesTests 12
 ManifestCodegenTests 5
@@ -95,6 +95,7 @@ PluginSigningKeyTests 15
 PluginTests 24
 PreReadAuthDerivationTests 5
 ProbeOrderTests 3
+ReadLengthPolicyTests 26
 RevocationClientTests 19
 RsEidCoreTests 48
 RsEidDriverTests 36
@@ -133,6 +134,7 @@ monitor_coalescer_test 1
 pcsc_6c_retry_test 15
 pcsc_connection_filter_test 1
 pcsc_handle_census_test 2
-pcsc_trace_test 3
+pcsc_read_length_test 6
+pcsc_trace_test 6
 sdk-consumer 1
 visual_signature_layout_example 1

@@ -505,21 +505,19 @@ TEST_F(CtkSmartCard, HeldSlotLeavingValidCardMarksTheCardGone)
 
 TEST_F(CtkSmartCard, LengthOptionsAreSetBeforeTheSession)
 {
-    for (const NSInteger maxInput : {NSInteger{261}, NSInteger{65544}}) {
-        SCOPED_TRACE(maxInput);
-        [slot.events removeAllObjects];
-        slot.maxInputLength = maxInput;
-        auto card = open();
-        ASSERT_TRUE(card.has_value());
-        NSArray* events = [slot.events copy];
-        const NSUInteger begin = [events indexOfObject:@"beginSession"];
-        ASSERT_NE(begin, NSNotFound);
-        EXPECT_LT([events indexOfObject:@"useExtendedLength"], begin);
-        EXPECT_LT([events indexOfObject:@"useCommandChaining"], begin);
-        FakeCard* fake = slot.cards.lastObject;
-        EXPECT_EQ(fake.useExtendedLength, maxInput > 261 ? YES : NO);
-        EXPECT_EQ(fake.useCommandChaining, NO);
-    }
+    // Extended length is always on: the slot's advertised limit is not
+    // trustworthy (a Gemalto reports 261 and carries 3072).
+    slot.maxInputLength = 261;
+    auto card = open();
+    ASSERT_TRUE(card.has_value());
+    NSArray* events = [slot.events copy];
+    const NSUInteger begin = [events indexOfObject:@"beginSession"];
+    ASSERT_NE(begin, NSNotFound);
+    EXPECT_LT([events indexOfObject:@"useExtendedLength"], begin);
+    EXPECT_LT([events indexOfObject:@"useCommandChaining"], begin);
+    FakeCard* fake = slot.cards.lastObject;
+    EXPECT_EQ(fake.useExtendedLength, YES);
+    EXPECT_EQ(fake.useCommandChaining, NO);
 }
 
 TEST_F(CtkSmartCard, ProtocolPrefersT1ThenT0)

@@ -9,6 +9,7 @@
 ///        returns a caller-supplied APDUResponse (defaulting to SW 9000).
 
 #include <smartcard/i_connection.h>
+#include <smartcard/read_length_policy.h>
 
 #include "apdu.h"
 
@@ -73,6 +74,18 @@ public:
         return responder(cmd);
     }
 
+    /// The policy readLengthPolicy() hands out; nullptr (the default) is a
+    /// connection that learns nothing.
+    void setReadLengthPolicy(LibreSCRS::SmartCard::Internal::ReadLengthPolicy* policy) noexcept
+    {
+        lengthPolicy = policy;
+    }
+
+    [[nodiscard]] LibreSCRS::SmartCard::Internal::ReadLengthPolicy* readLengthPolicy() noexcept override
+    {
+        return lengthPolicy;
+    }
+
     [[nodiscard]] const std::vector<std::vector<std::uint8_t>>& rawHistory() const noexcept
     {
         return rawTransmitted;
@@ -92,6 +105,7 @@ private:
     std::vector<LibreSCRS::SmartCard::Internal::APDUCommand> transmitted;
     std::vector<std::vector<std::uint8_t>> rawTransmitted;
     ResponseFn responder;
+    LibreSCRS::SmartCard::Internal::ReadLengthPolicy* lengthPolicy = nullptr;
 };
 
 } // namespace LibreSCRS::SecureChannel::TestSupport

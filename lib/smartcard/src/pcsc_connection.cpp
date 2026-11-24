@@ -4,6 +4,7 @@
 #include "pcsc_connection.h"
 #include "pcsc_classify.h"
 #include "pcsc_trace.h"
+#include <smartcard/read_length_policy.h>
 #include <smartcard/secure_buffer.h>
 
 #include <LibreSCRS/Logging.h>
@@ -17,6 +18,7 @@
 #include <functional>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <thread>
@@ -93,13 +95,17 @@ void appendHex(std::string& out, std::span<const std::uint8_t> bytes)
 // printed as a sentinel ("<redacted N bytes>") instead of hex.
 void emitPcscTrace(const char* phase, const std::string& readerName, const void* connAddr,
                    std::span<const std::uint8_t, 5> header, std::span<const std::uint8_t> data, bool dataRedacted,
-                   bool hasLe, std::uint8_t le)
+                   bool hasLe, std::uint16_t le, bool extendedLe, std::optional<std::uint16_t> extendedLc)
 {
     std::string line = pcscTracePrefix(phase, readerName, connAddr);
     line += " apdu=";
 
     // Header: CLA INS P1 P2 Lc — always printed.
     appendHex(line, header);
+
+    // An extended Lc follows the 00 marker the header ends with.
+    if (extendedLc)
+        std::format_to(std::back_inserter(line), "{:04X}", *extendedLc);
 
     // Data: redacted for sensitive INS; otherwise first kMaxDataPrintBytes
     // bytes, with an explicit "...(N more bytes)" tail when truncated.
@@ -113,9 +119,12 @@ void emitPcscTrace(const char* phase, const std::string& readerName, const void*
 
     // Le: printed last when present. For sensitive INS we still suppress
     // it (PIN-VERIFY APDUs are typically Le-less anyway, but be explicit).
-    if (hasLe && !dataRedacted)
-        std::format_to(std::back_inserter(line), "{:02X}", le);
-    else if (hasLe && dataRedacted)
+    if (hasLe && !dataRedacted) {
+        if (extendedLe)
+            std::format_to(std::back_inserter(line), "{:04X}", le);
+        else
+            std::format_to(std::back_inserter(line), "{:02X}", le);
+    } else if (hasLe && dataRedacted)
         line += "<le redacted>";
     emitPcscTraceLine(line);
 
@@ -150,14 +159,18 @@ void emitPcscTraceResponse(const std::string& readerName, const void* connAddr, 
 // produced by Secure-Messaging wrappers (PaceChannel) which bypass the
 // APDUCommand-typed transmit() overload.
 //
-// Wire-format cases (short APDU only — extended-length is rare on SM
-// channels and printed best-effort as header-only):
+// Wire-format cases:
 //   - Case 1:  CLA INS P1 P2                (4 bytes, no Lc/data/Le)
 //   - Case 2s: CLA INS P1 P2 Le             (5 bytes, Le-only; ISO 7816-4
 //                                            disambiguates 5-byte APDUs
 //                                            as Case 2)
 //   - Case 3s: CLA INS P1 P2 Lc data[Lc]    (5+Lc bytes, no Le)
 //   - Case 4s: CLA INS P1 P2 Lc data[Lc] Le (6+Lc bytes, with Le)
+//   - Case 2e: CLA INS P1 P2 00 Le Le       (7 bytes, two-byte Le)
+//   - Case 3e: CLA INS P1 P2 00 Lc Lc data  (7+Lc bytes, two-byte Lc)
+//   - Case 4e: as 3e followed by a two-byte Le (9+Lc bytes)
+// Extended reads are common now (READ BINARY is fitted to the card, under
+// secure messaging too), so they are decoded in full.
 void emitPcscTraceWire(const char* phase, const std::string& readerName, const void* connAddr,
                        const std::uint8_t* cmdBytes, DWORD cmdLen)
 {
@@ -173,7 +186,9 @@ void emitPcscTraceWire(const char* phase, const std::string& readerName, const v
 
     std::span<const std::uint8_t> data;
     bool hasLe = false;
-    std::uint8_t leByte = 0;
+    bool extendedLe = false;
+    std::uint16_t leValue = 0;
+    std::optional<std::uint16_t> extendedLc;
 
     if (cmdLen == 5) {
         // Case 2s: Le-only. Byte at offset 4 is Le, not Lc. Keep it in
@@ -182,7 +197,27 @@ void emitPcscTraceWire(const char* phase, const std::string& readerName, const v
         // is intentional: the header layout is a fixed wire-prefix view,
         // and the Le tail is the semantic value.
         hasLe = true;
-        leByte = cmdBytes[4];
+        leValue = cmdBytes[4];
+    } else if (cmdLen > 5 && cmdBytes[4] == 0 && cmdLen >= 7) {
+        // A short case-3 APDU never has Lc 0, so byte 4 == 0 with 7+ bytes is extended.
+        // Extended: 00 marker, then a two-byte Lc (with data) or a two-byte Le.
+        if (cmdLen == 7) {
+            hasLe = true;
+            extendedLe = true;
+            leValue = static_cast<std::uint16_t>((cmdBytes[5] << 8) | cmdBytes[6]);
+        } else {
+            const std::size_t lc = (static_cast<std::size_t>(cmdBytes[5]) << 8) | cmdBytes[6];
+            const std::size_t dataEnd = 7 + lc;
+            if (dataEnd <= cmdLen) {
+                extendedLc = static_cast<std::uint16_t>(lc);
+                data = std::span<const std::uint8_t>(cmdBytes + 7, lc);
+                if (cmdLen == dataEnd + 2) {
+                    hasLe = true;
+                    extendedLe = true;
+                    leValue = static_cast<std::uint16_t>((cmdBytes[dataEnd] << 8) | cmdBytes[dataEnd + 1]);
+                }
+            }
+        }
     } else if (cmdLen > 5) {
         // Case 3s / Case 4s: byte at offset 4 is Lc.
         const std::uint8_t lc = cmdBytes[4];
@@ -193,7 +228,7 @@ void emitPcscTraceWire(const char* phase, const std::string& readerName, const v
             }
             if (cmdLen > dataEnd) {
                 hasLe = true;
-                leByte = cmdBytes[dataEnd];
+                leValue = cmdBytes[dataEnd];
             }
         }
         // If dataEnd > cmdLen the APDU is malformed (Lc claims more bytes
@@ -205,7 +240,7 @@ void emitPcscTraceWire(const char* phase, const std::string& readerName, const v
 
     const std::uint8_t ins = (cmdLen >= 2) ? cmdBytes[1] : std::uint8_t{0};
     emitPcscTrace(phase, readerName, connAddr, std::span<const std::uint8_t, 5>(header), data, isSensitiveIns(ins),
-                  hasLe, leByte);
+                  hasLe, leValue, extendedLe, extendedLc);
 }
 
 } // namespace LibreSCRS::SmartCard::Internal::detail
@@ -374,11 +409,56 @@ std::expected<APDUResponse, TransportError> PCSCConnection::transmitRaw(std::spa
     return transmitRaw(cmdBytes.data(), static_cast<DWORD>(cmdBytes.size()));
 }
 
+void PCSCConnection::learnReadLengthBeforeSm()
+{
+    // Only a card that has not settled the question is asked: Declared and
+    // Short are answers already.
+    const ReadLengthState before = lengthPolicy.state();
+    if (before != ReadLengthState::Untested && before != ReadLengthState::Accepted) {
+        return;
+    }
+    // The caller holds the transaction. A failure to carry the command leaves
+    // the card reading short; it never reaches the caller.
+    const auto [state, declared] = classifyLearnAnswer(exchangeUnfitted(learnReadLengthCommand()), before);
+    lengthPolicy.learn(state, declared);
+}
+
 std::expected<APDUResponse, TransportError> PCSCConnection::transmit(const APDUCommand& cmd)
 {
     if (transmitFilter)
         return transmitFilter(cmd);
+    if (!isReadBinary(cmd))
+        return exchangeUnfitted(cmd);
 
+    // Never more than the caller asked for, never more than the card accepts.
+    const std::size_t allowed = lengthPolicy.allowedLe(0);
+    const std::size_t asked = requestedLe(cmd);
+    const std::size_t fitted = std::min(asked, allowed);
+    APDUCommand sent = cmd;
+    if (fitted != asked)
+        sent.le = static_cast<std::uint16_t>(fitted);
+    if (fitted <= kShortLe)
+        return exchangeUnfitted(sent);
+
+    const bool untested = lengthPolicy.state() == ReadLengthState::Untested;
+    auto answer = exchangeUnfitted(sent);
+    // A transport failure drops to short in every state. A wrong-length answer
+    // drops only a card that has not yet shown it takes extended; once it has
+    // (or announced it) the same answer means this file, not the encoding.
+    const bool wrongLength = answer && answer->sw1 == 0x67;
+    if (!answer || wrongLength) {
+        if (!answer || untested)
+            lengthPolicy.demoteToShort();
+        sent.le = kShortLe;
+        return exchangeUnfitted(sent);
+    }
+    if (untested && isReadSuccess(*answer))
+        lengthPolicy.markAccepted();
+    return answer;
+}
+
+std::expected<APDUResponse, TransportError> PCSCConnection::exchangeUnfitted(const APDUCommand& cmd)
+{
     // SecureBuffer adoption: the serialization may carry PIN/PUK bytes
     // (PIN verbs), so the wire copy is cleansed on every exit path.
     SecureBuffer cmdBytes(cmd.toBytes());

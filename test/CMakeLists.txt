@@ -55,6 +55,15 @@ target_include_directories(EfDirTests PRIVATE
 target_compile_definitions(EfDirTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(EfDirTests)
 
+# Read-length policy: what Le a card accepts, learned once per connection.
+add_executable(ReadLengthPolicyTests read_length_policy_test.cpp)
+target_link_libraries(ReadLengthPolicyTests GTest::gtest_main SmartCard_Impl)
+target_include_directories(ReadLengthPolicyTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+)
+target_compile_definitions(ReadLengthPolicyTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(ReadLengthPolicyTests)
+
 # PKCS15Card::probeViaEfDir integration coverage: proves the selection
 # loop picks the candidate under which EF.ODF actually selects, not the
 # first EF.DIR entry whose AID matches. ef_dir_test.cpp above only covers
@@ -290,10 +299,13 @@ target_link_libraries(LibreSCRS_SmChannelTests
     GTest::gtest_main
     LibreSCRS::SmartCard
     LibreSCRS_SecureChannel_ForTests
-    SmartCard_Impl)
+    SmartCard_Impl
+    EMRTDCrypto)
 target_include_directories(LibreSCRS_SmChannelTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include)
 target_compile_definitions(LibreSCRS_SmChannelTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(LibreSCRS_SmChannelTests)
 
@@ -476,6 +488,21 @@ if(NOT APPLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
     target_compile_definitions(pcsc_trace_test PRIVATE LIBRESCRS_INTERNAL_BUILD)
     gtest_discover_tests(pcsc_trace_test)
+
+    # What the connection learns about the Le a card accepts, over the real PC/SC
+    # body and stubbed entry points. It links LibreSCRS_SmartCard_RawDiagnostic
+    # instead of LibreSCRS_SmartCard_PcscForTests: the connection's open() is
+    # private and openRawDiagnostic is the one way in, and the two archives
+    # together define the connection twice. RawDiagnostic compiles the PC/SC
+    # body into the executable, so the stubs apply. The source never calls
+    # CardSession::open, and check-impl-visibility.sh only watches binaries that
+    # link PcscForTests, so it does not see this one.
+    add_executable(pcsc_read_length_test pcsc_read_length_test.cpp)
+    target_link_libraries(pcsc_read_length_test SmartCard_Impl LibreSCRS_SmartCard_RawDiagnostic GTest::gtest_main)
+    target_include_directories(pcsc_read_length_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
+    target_compile_definitions(pcsc_read_length_test PRIVATE LIBRESCRS_INTERNAL_BUILD)
+    gtest_discover_tests(pcsc_read_length_test)
 endif()
 
 # CardSession::open classifies a failure by the PC/SC code: this executable
@@ -1420,12 +1447,19 @@ target_link_libraries(LibreSCRS_CardSessionTests PRIVATE
     LibreSCRS_SmartCard_TestHelpers
     # arms a seam of the session's connection: a test copy of the class
     LibreSCRS_SmartCard_RawDiagnostic
+    # a live PACE channel is installed to show no learning happens under it
+    LibreSCRS_SecureChannel_ForTests
+    EMRTDCrypto
 )
 # The CardSessionPaceCapabilityHoist tests script a card via PCSCConnection::setTransmitFilter
 # (the same detached-session seam the eMRTD plugin tests use); expose apdu.h /
 # pcsc_connection.h from the low-level SmartCard_Impl source tree.
 target_include_directories(LibreSCRS_CardSessionTests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/SecureChannel/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include)
 # The internal apdu.h / pcsc_connection.h above (CardSession::transmit routing on
 # detached sessions) are gated behind LIBRESCRS_INTERNAL_BUILD.
 target_compile_definitions(LibreSCRS_CardSessionTests PRIVATE LIBRESCRS_INTERNAL_BUILD)

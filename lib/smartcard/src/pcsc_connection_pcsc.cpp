@@ -56,6 +56,14 @@ std::expected<void, TransportError> PCSCConnection::connect()
     if (pcscTraceEnabled()) {
         emitPcscTraceEvent("connect", readerName, this);
     }
+    // Connecting sends no command: a card that still holds a secure-messaging
+    // session from another process would lose it to a plain one. Case 2E has no
+    // TPDU of its own on T=0, and no card has been measured taking extended
+    // there, so T=0 reads short; a T=1 card stays Untested until
+    // learnReadLengthBeforeSm() or the first long READ BINARY decides.
+    if (activeProtocol == SCARD_PROTOCOL_T0) {
+        lengthPolicy.learn(ReadLengthState::Short);
+    }
     return {};
 }
 

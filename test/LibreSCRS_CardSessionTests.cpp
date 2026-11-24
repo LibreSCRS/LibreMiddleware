@@ -140,8 +140,10 @@ TEST(CardSession_4_1_API, ActiveChannelHolderIsMoveOnly)
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -750,4 +752,229 @@ TEST(CardSessionActivation, ATokenCancelledMidActivationIsCancelledOnTheSmPath)
     ASSERT_TRUE(outcome.has_value());
     ASSERT_FALSE(outcome->has_value());
     EXPECT_EQ(outcome->error(), ActivationError::Cancelled);
+}
+
+// -- The read length is learned once, just before PACE, never under SM ------
+//
+// One ordered log is shared by the plain filter (what the dispatcher sends) and
+// the raw responder (what the connection sends on its own, the learning
+// command included), so the order of the two is visible.
+
+#include <LibreSCRS/Secure/Buffer.h>
+#include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
+#include <LibreSCRS_internal/SecureChannel/PaceChannel.h>
+#include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
+#include <smartcard/read_length_policy.h>
+
+namespace {
+
+using LibreSCRS::SmartCard::Internal::ReadLengthState;
+
+const std::vector<std::uint8_t> kLearnWire{0x00, 0xB0, 0x81, 0x00, 0x00, 0x08, 0x00};
+// DO 7F66 declaring a maximum response of 960 bytes.
+const std::vector<std::uint8_t> kDeclares960Info{0x7F, 0x66, 0x08, 0x02, 0x02, 0x07, 0xFF, 0x02, 0x02, 0x03, 0xC0};
+
+struct LearnRig
+{
+    std::shared_ptr<CardSession> session;
+    TwoOidPaceCard card;
+    std::vector<std::string> log;
+    std::uint16_t cardAccessSw = 0x9000;
+    std::vector<std::uint8_t> learnData;
+    std::uint16_t learnSw = 0x9000;
+    std::function<void()> onCardAccessRead;
+    std::optional<bool> transactionHeldWhenLearning;
+
+    explicit LearnRig(const char* reader) : session(LibreSCRS::SmartCard::Testing::makeDetachedCardSession(reader))
+    {
+        card.mseSw = {0x9000};
+        auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*session);
+        conn.setTransmitFilter([this](const APDUCommand& cmd) -> APDUResponse {
+            if (cmd.ins == 0x22)
+                log.emplace_back("mse");
+            else if (cmd.ins == 0xB0 && card.selected == 0x011C)
+                log.emplace_back("read-card-access");
+            else
+                log.emplace_back("plain-other");
+            auto answer = card(cmd);
+            if (cmd.ins == 0xB0 && card.selected == 0x011C) {
+                if (cardAccessSw != 0x9000) {
+                    answer.sw1 = static_cast<std::uint8_t>(cardAccessSw >> 8);
+                    answer.sw2 = static_cast<std::uint8_t>(cardAccessSw & 0xFF);
+                    if (cardAccessSw == 0x6982)
+                        answer.data.clear();
+                }
+                if (onCardAccessRead)
+                    onCardAccessRead();
+            }
+            return answer;
+        });
+        conn.setDetachedRawResponder(
+            [this, &conn](std::span<const std::uint8_t> bytes) -> std::expected<APDUResponse, TransportError> {
+                if (std::equal(bytes.begin(), bytes.end(), kLearnWire.begin(), kLearnWire.end())) {
+                    log.emplace_back("raw-learn");
+                    transactionHeldWhenLearning = conn.isTransactionHeld();
+                    return APDUResponse{learnData, static_cast<std::uint8_t>(learnSw >> 8),
+                                        static_cast<std::uint8_t>(learnSw & 0xFF)};
+                }
+                log.emplace_back("raw-other");
+                return APDUResponse{{}, 0x6D, 0x00};
+            });
+        session->setCredentialProvider([this](const LibreSCRS::Auth::AuthRequirement&) {
+            if (++prompts > 1)
+                return LibreSCRS::Auth::CredentialResult::cancelled();
+            std::vector<LibreSCRS::Auth::CredentialEntry> values;
+            values.push_back({"can", LibreSCRS::Secure::String{"123456"}});
+            return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
+        });
+    }
+
+    auto activatePace(LibreSCRS::CancelToken token = {})
+    {
+        prompts = 0;
+        return session->activateChannelWithSm(
+            kActivationAid, LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can}, std::move(token));
+    }
+
+    [[nodiscard]] std::ptrdiff_t count(const std::string& what) const
+    {
+        return std::count(log.begin(), log.end(), what);
+    }
+    [[nodiscard]] std::ptrdiff_t at(const std::string& what) const
+    {
+        return std::find(log.begin(), log.end(), what) - log.begin();
+    }
+    ReadLengthState state()
+    {
+        return LibreSCRS::SmartCard::Internal::connectionOf(*session).readLengthPolicy()->state();
+    }
+
+    int prompts = 0;
+};
+
+LibreSCRS::SecureChannel::SessionKeys learnTestAesKeys()
+{
+    LibreSCRS::SecureChannel::SessionKeys k;
+    k.encKey = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, 0x11)};
+    k.macKey = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, 0x22)};
+    k.ssc = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, 0x00)};
+    k.cipher = LibreSCRS::SecureChannel::SmCipher::Aes;
+    return k;
+}
+
+} // namespace
+
+TEST(CardSessionLearnsReadLength, OnceAfterACardAccessReadThatEndedInEndOfFileAndBeforeMseSetAt)
+{
+    LearnRig rig("Learn 6282 Reader");
+    rig.cardAccessSw = 0x6282;
+    rig.learnData = kDeclares960Info;
+
+    (void)rig.activatePace();
+
+    ASSERT_EQ(rig.count("raw-learn"), 1);
+    ASSERT_GE(rig.count("mse"), 1);
+    EXPECT_LT(rig.at("read-card-access"), rig.at("raw-learn"));
+    EXPECT_LT(rig.at("raw-learn"), rig.at("mse"));
+    EXPECT_EQ(rig.state(), ReadLengthState::Declared);
+    ASSERT_TRUE(rig.transactionHeldWhenLearning.has_value());
+    EXPECT_TRUE(*rig.transactionHeldWhenLearning) << "inside the activation transaction";
+}
+
+TEST(CardSessionLearnsReadLength, OnceAfterACardAccessReadThatSucceededAndBeforeMseSetAt)
+{
+    LearnRig rig("Learn 9000 Reader");
+
+    (void)rig.activatePace();
+
+    ASSERT_EQ(rig.count("raw-learn"), 1);
+    EXPECT_LT(rig.at("read-card-access"), rig.at("raw-learn"));
+    EXPECT_LT(rig.at("raw-learn"), rig.at("mse"));
+    EXPECT_EQ(rig.state(), ReadLengthState::Accepted) << "a success without a declaration";
+}
+
+TEST(CardSessionLearnsReadLength, NotWhenTheCardAccessReadWasRefused)
+{
+    LearnRig rig("Learn 6982 Reader");
+    rig.cardAccessSw = 0x6982; // not definitive: the PACE attempt goes on
+
+    (void)rig.activatePace();
+
+    EXPECT_EQ(rig.count("read-card-access"), 1);
+    EXPECT_EQ(rig.count("raw-learn"), 0);
+    EXPECT_EQ(rig.state(), ReadLengthState::Untested);
+}
+
+TEST(CardSessionLearnsReadLength, NotForBac)
+{
+    LearnRig rig("Learn BAC Reader");
+    LibreSCRS::SecureChannel::BacInput input;
+    input.documentNumber = LibreSCRS::Secure::String{"L898902C"};
+    input.dateOfBirth = LibreSCRS::Secure::String{"690806"};
+    input.dateOfExpiry = LibreSCRS::Secure::String{"940623"};
+    rig.session->setBacInput(std::move(input));
+
+    (void)rig.session->activateChannelWithSm(kActivationAid, LibreSCRS::SmartCard::BacRequest{},
+                                             LibreSCRS::CancelToken{});
+
+    EXPECT_EQ(rig.count("raw-learn"), 0);
+    EXPECT_EQ(rig.state(), ReadLengthState::Untested);
+}
+
+TEST(CardSessionLearnsReadLength, NotWhenALivePaceChannelAlreadyServesTheApplet)
+{
+    LearnRig rig("Learn Case 1 Reader");
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*rig.session);
+    LibreSCRS::SmartCard::detail::ChannelInjector::installForTesting(
+        *rig.session, std::make_unique<LibreSCRS::SecureChannel::PaceChannel>(conn, kActivationAid, learnTestAesKeys()),
+        LibreSCRS::SmartCard::SmProtocolRequest{LibreSCRS::SmartCard::PaceRequest{}});
+
+    auto r = rig.activatePace();
+
+    EXPECT_TRUE(r.has_value());
+    EXPECT_TRUE(rig.log.empty()) << "nothing at all is sent";
+    EXPECT_EQ(rig.state(), ReadLengthState::Untested);
+}
+
+TEST(CardSessionLearnsReadLength, NotWhenALivePaceChannelSwitchesApplet)
+{
+    LearnRig rig("Learn Case 2 Reader");
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*rig.session);
+    const LibreSCRS::SmartCard::AppletAid other{0xA0, 0x00, 0x00, 0x00, 0x63};
+    LibreSCRS::SmartCard::detail::ChannelInjector::installForTesting(
+        *rig.session, std::make_unique<LibreSCRS::SecureChannel::PaceChannel>(conn, other, learnTestAesKeys()),
+        LibreSCRS::SmartCard::SmProtocolRequest{LibreSCRS::SmartCard::PaceRequest{}});
+
+    (void)rig.activatePace();
+
+    EXPECT_EQ(rig.count("raw-learn"), 0);
+    EXPECT_EQ(rig.count("read-card-access"), 0) << "the wrapped SELECT is the only exchange";
+    EXPECT_EQ(rig.state(), ReadLengthState::Untested);
+}
+
+TEST(CardSessionLearnsReadLength, NotAgainOnceTheStateIsDeclared)
+{
+    LearnRig rig("Learn Twice Reader");
+    rig.learnData = kDeclares960Info;
+
+    (void)rig.activatePace();
+    ASSERT_EQ(rig.state(), ReadLengthState::Declared);
+    (void)rig.activatePace(); // the channel is not live: Case 3 again
+
+    EXPECT_GE(rig.count("mse"), 2) << "the second PACE did run";
+    EXPECT_EQ(rig.count("raw-learn"), 1) << "learned once on this connection";
+}
+
+TEST(CardSessionLearnsReadLength, ACancelledTokenAfterTheCardAccessReadSendsNothingMore)
+{
+    LearnRig rig("Learn Cancel Reader");
+    LibreSCRS::CancelSource source;
+    rig.onCardAccessRead = [&source] { source.requestCancel(); };
+
+    auto r = rig.activatePace(source.token());
+
+    ASSERT_FALSE(r.has_value());
+    EXPECT_EQ(r.error(), ActivationError::Cancelled);
+    EXPECT_EQ(rig.count("raw-learn"), 0);
+    EXPECT_EQ(rig.count("mse"), 0);
 }

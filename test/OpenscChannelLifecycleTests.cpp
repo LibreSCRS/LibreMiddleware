@@ -99,7 +99,7 @@ bool isSelectEfDir(const APDUCommand& cmd)
     return cmd.ins == 0xA4 && cmd.p1 == 0x00 && cmd.data == std::vector<std::uint8_t>{0x2F, 0x00};
 }
 
-bool isReadBinary(const APDUCommand& cmd)
+bool isEvenReadBinary(const APDUCommand& cmd)
 {
     return cmd.ins == 0xB0;
 }
@@ -184,7 +184,7 @@ EfDirScript efDirScript(std::vector<std::uint8_t> content, std::size_t chunkSize
                counter](const APDUCommand& cmd) -> APDUResponse {
         if (isSelectMf(cmd) || isSelectEfDir(cmd))
             return sw(0x90, 0x00);
-        if (!isReadBinary(cmd))
+        if (!isEvenReadBinary(cmd))
             return sw(0x6A, 0x82);
         const std::size_t off = readBinaryOffset(cmd);
         if (off >= content.size()) {

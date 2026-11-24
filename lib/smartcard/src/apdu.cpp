@@ -174,7 +174,7 @@ APDUCommand selectByFileId(uint8_t fileId1, uint8_t fileId2, uint8_t p2)
                        .hasLe = (p2 != 0x0C)};
 }
 
-APDUCommand readBinary(uint16_t offset, uint8_t length)
+APDUCommand readBinary(uint16_t offset, uint16_t length)
 {
     // P1 bit 8 selects short-EF addressing: an offset past 15 bits cannot be
     // sent with this INS, and masking it would read from offset - 0x8000.

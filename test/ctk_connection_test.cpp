@@ -12,16 +12,20 @@
 #include "pcsc_connection.h"
 #include "pcsc_raw_diagnostic.h"
 
+#include <LibreSCRS/Logging.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdlib>
 #include <expected>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -31,6 +35,7 @@ using LibreSCRS::SmartCard::TransportError;
 using LibreSCRS::SmartCard::Internal::APDUCommand;
 using LibreSCRS::SmartCard::Internal::CardTransaction;
 using LibreSCRS::SmartCard::Internal::PCSCConnection;
+using LibreSCRS::SmartCard::Internal::ReadLengthState;
 using Kind = LibreSCRS::SmartCard::TransportError::Kind;
 namespace Ctk = LibreSCRS::SmartCard::Internal::Ctk;
 namespace Fake = LibreSCRS::SmartCard::Internal::Ctk::Fake;
@@ -67,6 +72,32 @@ std::optional<Kind> kindOf(const std::expected<T, TransportError>& r, std::strin
 APDUCommand readBinaryCommand()
 {
     return LibreSCRS::SmartCard::Internal::readBinary(0x0000, 0x10);
+}
+
+using Reply = std::expected<Bytes, Ctk::CtkStatus>;
+
+// The command that learns the read length: READ BINARY, SFI 1, Le 2048.
+const Bytes kLearn{0x00, 0xB0, 0x81, 0x00, 0x00, 0x08, 0x00};
+
+// Opens a connection to a card that answers @p replies in order; 9000 once they
+// run out.
+std::unique_ptr<PCSCConnection> connectScripted(const std::string& reader, std::vector<Reply> replies)
+{
+    auto script = std::make_shared<std::vector<Reply>>(std::move(replies));
+    Fake::slot(reader).responder = [script](std::span<const std::uint8_t>) -> Reply {
+        if (script->empty())
+            return Bytes{0x90, 0x00};
+        auto next = std::move(script->front());
+        script->erase(script->begin());
+        return next;
+    };
+    return connect(reader);
+}
+
+// Commands the card received so far.
+std::vector<Bytes> commandsReceived(const std::string& reader)
+{
+    return Fake::calls(reader).received;
 }
 
 class CtkConnection : public ::testing::Test
@@ -250,7 +281,7 @@ TEST_F(CtkConnection, ReconnectOnLiveSessionIsANoOp)
     EXPECT_TRUE(conn->reconnect());
     const auto c = Fake::calls(kReaderA);
     EXPECT_EQ(c.opens, 1);
-    EXPECT_EQ(c.exchanges, 0);
+    EXPECT_EQ(c.exchanges, 0) << "connecting sends nothing";
 }
 
 TEST_F(CtkConnection, ResetIsUnsupported)
@@ -439,4 +470,259 @@ TEST_F(CtkConnection, ReaderBIsNotDelayedByReaderA)
     busyA.join();
 
     EXPECT_TRUE(aStillInside) << "reader B's operations waited for reader A's exchange";
+}
+
+// What the connection learns about the card, and when ------------------------------
+
+// DO 7F66: maximum command size 2047, maximum response size 960.
+const Bytes kDeclares960{0x7F, 0x66, 0x08, 0x02, 0x02, 0x07, 0xFF, 0x02, 0x02, 0x03, 0xC0, 0x90, 0x00};
+
+TEST_F(CtkConnection, ConnectingToAT1CardSendsNothingAndLeavesTheStateUntested)
+{
+    auto conn = connectScripted(kReaderA, {Bytes{0x6D, 0x00}});
+    ASSERT_TRUE(conn);
+    EXPECT_EQ(conn->readLengthPolicy()->state(), ReadLengthState::Untested);
+    EXPECT_TRUE(Fake::calls(kReaderA).received.empty());
+    EXPECT_EQ(Fake::calls(kReaderA).exchanges, 0);
+}
+
+TEST_F(CtkConnection, T0IsShortWithoutAnyCommand)
+{
+    Fake::slot(kReaderA).protocol = Ctk::CtkProtocol::T0;
+    auto conn = connect(kReaderA);
+    ASSERT_TRUE(conn);
+    EXPECT_EQ(conn->readLengthPolicy()->state(), ReadLengthState::Short);
+    EXPECT_TRUE(Fake::calls(kReaderA).received.empty());
+}
+
+TEST_F(CtkConnection, CardCapabilitiesBitInTheAtrIsNotRead)
+{
+    // Compact-TLV card capabilities 73 00 00 40 announce extended length, but
+    // only a card that proves it counts: connecting with this ATR sends no
+    // command and the state stays untested.
+    Fake::slot(kReaderA).atr = {0x3B, 0x88, 0x80, 0x01, 0x73, 0x00, 0x00, 0x40, 0x00};
+    auto conn = connectScripted(kReaderA, {});
+    ASSERT_TRUE(conn);
+    EXPECT_EQ(conn->readLengthPolicy()->state(), ReadLengthState::Untested);
+    EXPECT_TRUE(Fake::calls(kReaderA).received.empty());
+}
+
+TEST_F(CtkConnection, LearningBeforeSecureMessagingReadsTheDeclaredResponseSize)
+{
+    auto conn = connectScripted(kReaderA, {kDeclares960});
+    ASSERT_TRUE(conn);
+
+    conn->learnReadLengthBeforeSm();
+
+    EXPECT_EQ(conn->readLengthPolicy()->state(), ReadLengthState::Declared);
+    EXPECT_EQ(conn->readLengthPolicy()->declaredResponseMax(), 960U);
+    const auto c = Fake::calls(kReaderA);
+    ASSERT_EQ(c.received.size(), 1U) << "the learning command alone";
+    EXPECT_EQ(c.received[0], kLearn);
+    for (const auto& command : c.received)
+        EXPECT_NE(command[1], 0xA4) << "no SELECT";
+}
+
+TEST_F(CtkConnection, LearningFromUntestedWithWrongLengthIsShortAndSentOnce)
+{
+    auto conn = connectScripted(kReaderA, {Bytes{0x67, 0x00}});
+    ASSERT_TRUE(conn);
+    conn->learnReadLengthBeforeSm();
+    EXPECT_EQ(conn->readLengthPolicy()->state(), ReadLengthState::Short);
+    EXPECT_EQ(Fake::calls(kReaderA).received.size(), 1U) << "no second command";
+}
+
+TEST_F(CtkConnection, LearningFromAcceptedKeepsAcceptedOnWrongLength)
+{
+    auto conn = connectScripted(kReaderA, {Bytes{0x67, 0x00}});
+    ASSERT_TRUE(conn);
+    conn->readLengthPolicy()->learn(ReadLengthState::Accepted);
+    conn->learnReadLengthBeforeSm();
+    EXPECT_EQ(conn->readLengthPolicy()->state(), ReadLengthState::Accepted);
+    EXPECT_EQ(Fake::calls(kReaderA).received.size(), 1U);
+}
+
+TEST_F(CtkConnection, LearningLeavesTheStateWhenTheCardRefusesForAnotherReason)
+{
+    for (const auto start : {ReadLengthState::Untested, ReadLengthState::Accepted}) {
+        for (const Bytes& sw : {Bytes{0x69, 0x82}, Bytes{0x6A, 0x82}}) {
+            SCOPED_TRACE(static_cast<int>(start));
+            Fake::reset();
+            (void)Fake::slot(kReaderA);
+            auto conn = connectScripted(kReaderA, {sw});
+            ASSERT_TRUE(conn);
+            conn->readLengthPolicy()->learn(start);
+            conn->learnReadLengthBeforeSm();
+            EXPECT_EQ(conn->readLengthPolicy()->state(), start);
+            EXPECT_EQ(Fake::calls(kReaderA).received.size(), 1U);
+        }
+    }
+}
+
+TEST_F(CtkConnection, LearningThatFailsOnTheWireIsShortWithoutAnException)
+{
+    auto conn = connectScripted(kReaderA, {std::unexpected(Ctk::CtkStatus::CommError)});
+    ASSERT_TRUE(conn);
+    EXPECT_NO_THROW(conn->learnReadLengthBeforeSm());
+    EXPECT_EQ(conn->readLengthPolicy()->state(), ReadLengthState::Short);
+}
+
+TEST_F(CtkConnection, LearningIsSkippedOnceTheStateIsDeclaredOrShort)
+{
+    for (const auto state : {ReadLengthState::Declared, ReadLengthState::Short}) {
+        SCOPED_TRACE(static_cast<int>(state));
+        Fake::reset();
+        (void)Fake::slot(kReaderA);
+        auto conn = connectScripted(kReaderA, {});
+        ASSERT_TRUE(conn);
+        conn->readLengthPolicy()->learn(state, state == ReadLengthState::Declared ? 960 : 0);
+        conn->learnReadLengthBeforeSm();
+        EXPECT_TRUE(Fake::calls(kReaderA).received.empty());
+        EXPECT_EQ(conn->readLengthPolicy()->state(), state);
+    }
+}
+
+// The Le a READ BINARY goes out with ----------------------------------------------
+
+TEST_F(CtkConnection, DeclaredCardGetsTheDeclaredLeAndNeverMoreThanAsked)
+{
+    auto conn = connectScripted(kReaderA, {});
+    conn->readLengthPolicy()->learn(ReadLengthState::Declared, 960);
+
+    ASSERT_TRUE(conn->transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 20000)));
+    ASSERT_TRUE(conn->transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 100)));
+
+    const auto sent = commandsReceived(kReaderA);
+    ASSERT_EQ(sent.size(), 2U);
+    EXPECT_EQ(sent[0], (Bytes{0x00, 0xB0, 0x00, 0x00, 0x00, 0x03, 0xBE})) << "960 less the status word";
+    EXPECT_EQ(sent[1], (Bytes{0x00, 0xB0, 0x00, 0x00, 0x64})) << "a smaller Le is not raised";
+}
+
+TEST_F(CtkConnection, UntestedCardIsTriedWithTheUndeclaredLeAndThenAccepted)
+{
+    auto conn = connectScripted(kReaderA, {Bytes{0x01, 0x02, 0x90, 0x00}});
+
+    const auto response = conn->transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 20000));
+
+    ASSERT_TRUE(response);
+    EXPECT_EQ(commandsReceived(kReaderA)[0], (Bytes{0x00, 0xB0, 0x00, 0x00, 0x00, 0x08, 0x00}));
+    EXPECT_EQ(conn->readLengthPolicy()->state(), ReadLengthState::Accepted);
+}
+
+TEST_F(CtkConnection, EndOfFileAnswerFromAnUntestedCardAlsoMarksItAccepted)
+{
+    auto conn = connectScripted(kReaderA, {Bytes{0x01, 0x02, 0x62, 0x82}});
+
+    const auto response = conn->transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 20000));
+
+    ASSERT_TRUE(response);
+    EXPECT_EQ(response->data, (Bytes{0x01, 0x02}));
+    EXPECT_EQ(response->statusWord(), 0x6282);
+    EXPECT_EQ(commandsReceived(kReaderA)[0], (Bytes{0x00, 0xB0, 0x00, 0x00, 0x00, 0x08, 0x00}));
+    EXPECT_EQ(conn->readLengthPolicy()->state(), ReadLengthState::Accepted);
+}
+
+TEST_F(CtkConnection, WrongLengthFromAnUntestedCardIsRepeatedShortAndRemembered)
+{
+    auto conn = connectScripted(kReaderA, {Bytes{0x67, 0x00}, Bytes{0xAA, 0x90, 0x00}});
+
+    const auto response = conn->transmit(LibreSCRS::SmartCard::Internal::readBinary(0x0010, 20000));
+
+    ASSERT_TRUE(response);
+    EXPECT_EQ(response->data, (Bytes{0xAA})) << "the caller sees the second answer only";
+    const auto sent = commandsReceived(kReaderA);
+    ASSERT_EQ(sent.size(), 2U);
+    EXPECT_EQ(sent[1], (Bytes{0x00, 0xB0, 0x00, 0x10, 0x00})) << "the same offset, Le 256";
+    EXPECT_EQ(conn->readLengthPolicy()->state(), ReadLengthState::Short);
+}
+
+TEST_F(CtkConnection, TransportFailureOnAnAcceptedCardDropsToShortAndRepeats)
+{
+    auto conn = connectScripted(kReaderA, {std::unexpected(Ctk::CtkStatus::CommError), Bytes{0xAA, 0x90, 0x00}});
+    conn->readLengthPolicy()->learn(ReadLengthState::Accepted);
+
+    const auto response = conn->transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 20000));
+
+    ASSERT_TRUE(response);
+    EXPECT_TRUE(response->isSuccess());
+    EXPECT_EQ(commandsReceived(kReaderA).size(), 2U);
+    EXPECT_EQ(conn->readLengthPolicy()->state(), ReadLengthState::Short);
+}
+
+TEST_F(CtkConnection, OtherStatusFromAnUntestedCardReachesTheCallerAndChangesNothing)
+{
+    auto conn = connectScripted(kReaderA, {Bytes{0x6A, 0x82}});
+
+    const auto response = conn->transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 20000));
+
+    ASSERT_TRUE(response);
+    EXPECT_EQ(response->statusWord(), 0x6A82);
+    EXPECT_EQ(commandsReceived(kReaderA).size(), 1U);
+    EXPECT_EQ(conn->readLengthPolicy()->state(), ReadLengthState::Untested);
+}
+
+TEST_F(CtkConnection, RawTransmitIsNotFitted)
+{
+    auto conn = connectScripted(kReaderA, {});
+    conn->readLengthPolicy()->learn(ReadLengthState::Short);
+    const Bytes wire{0x00, 0xB0, 0x00, 0x00, 0x00, 0x4E, 0x20};
+
+    ASSERT_TRUE(conn->transmitRaw(std::span<const std::uint8_t>(wire)));
+
+    EXPECT_EQ(commandsReceived(kReaderA)[0], wire);
+}
+
+TEST_F(CtkConnection, WrongLengthOnAnAcceptedOrDeclaredCardRepeatsShortWithoutDemoting)
+{
+    for (const auto state : {ReadLengthState::Accepted, ReadLengthState::Declared}) {
+        SCOPED_TRACE(static_cast<int>(state));
+        Fake::reset();
+        (void)Fake::slot(kReaderA);
+        auto conn = connectScripted(kReaderA, {Bytes{0x67, 0x00}, Bytes{0xAA, 0x90, 0x00}});
+        conn->readLengthPolicy()->learn(state, state == ReadLengthState::Declared ? 960 : 0);
+
+        const auto response = conn->transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 20000));
+
+        ASSERT_TRUE(response);
+        EXPECT_EQ(response->data, (Bytes{0xAA}));
+        const auto sent = commandsReceived(kReaderA);
+        ASSERT_EQ(sent.size(), 2U);
+        EXPECT_EQ(sent[1], (Bytes{0x00, 0xB0, 0x00, 0x00, 0x00}));
+        EXPECT_EQ(conn->readLengthPolicy()->state(), state) << "this file, not the encoding";
+
+        // The next command is long again.
+        ASSERT_TRUE(conn->transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 20000)));
+        const auto later = commandsReceived(kReaderA);
+        ASSERT_EQ(later.size(), 3U);
+        const std::size_t le = state == ReadLengthState::Declared ? 958 : 2048;
+        EXPECT_EQ(later[2], (Bytes{0x00, 0xB0, 0x00, 0x00, 0x00, static_cast<std::uint8_t>(le >> 8),
+                                   static_cast<std::uint8_t>(le & 0xFF)}));
+    }
+}
+
+// The trace shows the Le an extended command carries, not a short Lc read off
+// its first length byte.
+TEST_F(CtkConnection, TraceShowsTheRealLeOfAnExtendedCommand)
+{
+    std::vector<std::string> lines;
+    ::setenv("LIBRESCRS_PCSC_TRACE", "1", 1);
+    LibreSCRS::log::resetForTest();
+    LibreSCRS::log::init([&lines](LibreSCRS::log::Level, std::string_view line) { lines.emplace_back(line); });
+    auto conn = connect(kReaderA);
+    conn->readLengthPolicy()->learn(ReadLengthState::Accepted);
+
+    (void)conn->transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 2048));
+    (void)conn->transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 0xFF));
+    (void)conn->transmit(
+        LibreSCRS::SmartCard::Internal::APDUCommand{0x00, 0xA4, 0x00, 0x00, {0xAA, 0xBB}, 0x0400, true});
+
+    ::unsetenv("LIBRESCRS_PCSC_TRACE");
+    LibreSCRS::log::resetForTest();
+    const auto seen = [&lines](std::string_view needle) {
+        return std::any_of(lines.begin(), lines.end(),
+                           [needle](const std::string& l) { return l.find(needle) != std::string::npos; });
+    };
+    EXPECT_TRUE(seen("apdu=00B00000000800")) << "Le 0800 after the 00 marker";
+    EXPECT_TRUE(seen("apdu=00B00000FFFF")) << "a short Le stays one byte";
+    EXPECT_TRUE(seen("apdu=00A40000000002AABB0400")) << "an extended Lc is shown before the data";
 }

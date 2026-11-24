@@ -151,8 +151,9 @@ std::expected<std::vector<std::uint8_t>, CtkFailure> CtkCard::exchange(std::span
         rec.calls.received.emplace_back(command.begin(), command.end());
         responder = rec.slot.responder;
     }
-    if (!responder)
+    if (!responder) {
         return std::vector<std::uint8_t>{0x90, 0x00};
+    }
     auto reply = responder(command);
     if (!reply)
         return std::unexpected(CtkFailure{reply.error(), "scripted failure"});

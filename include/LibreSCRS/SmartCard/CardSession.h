@@ -511,6 +511,20 @@ public:
     ///   continuation is not interrupted by the token) and, on a T=0 card,
     ///   resends with the length a @c 6Cxx answer names.
     ///
+    /// Whenever the command is sent (with no channel, through an open plain
+    /// channel, or under secure messaging) a READ BINARY (INS @c B0 or @c B1)
+    /// is the one command whose expected length the session fits to the card:
+    /// it never asks for more than the caller did and may ask for less, so the
+    /// answer can carry fewer bytes than @p apdu requested, as ISO/IEC 7816-4
+    /// allows.
+    /// Without secure messaging, when the card refuses an extended length
+    /// (@c 67xx) or the reader fails on it, the session repeats the command
+    /// once with a short length and returns that answer. Under secure
+    /// messaging it asks for at most what the card announces it can answer
+    /// (256 when it announces nothing) and repeats only on a protected
+    /// @c 67xx; a reader error still fails the channel, as described below.
+    /// @ref transmitRaw sends its bytes unchanged.
+    ///
     /// A card's own answer is the value, whatever its status word (6987/6988
     /// and 6F00 included). A reader error during an exchange under secure
     /// messaging, and a response that fails the MAC check
@@ -522,7 +536,8 @@ public:
     ///              Le @c 00 meaning 256) unless the data exceeds 255 bytes or
     ///              more than 256 answer bytes are expected, extended (both
     ///              fields) otherwise, with an extended Le from @c 0001 to
-    ///              @c FFFF. The session sends the command it decodes, so it
+    ///              @c FFFF. Apart from the READ BINARY length described
+    ///              above, the session sends the command it decodes, so it
     ///              accepts only bytes that encode back to themselves: an
     ///              extended field where a short one suffices, or an extended
     ///              Le of @c 0000, is valid ISO/IEC 7816-4 but refused.

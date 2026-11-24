@@ -132,3 +132,39 @@ TEST_F(PcscTraceTest, PinBytesOfAVerifyAreNeverTraced)
     EXPECT_FALSE(anyLineContains("A1B2C3D4"));
     EXPECT_FALSE(anyLineContains("a1b2c3d4"));
 }
+
+// An extended Le is traced as the two bytes it is, not read as a short Lc.
+TEST_F(PcscTraceTest, ExtendedLeIsTracedInFull)
+{
+    captureWithTrace(true);
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "test-reader");
+    g_reply = {0x90, 0x00};
+
+    (void)conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0x0000, 2048));
+
+    EXPECT_TRUE(anyLineContains("apdu=00B00000000800")) << "00 B0 00 00 | 00 | Le 0800";
+}
+
+// An extended case 4 command shows its two Lc bytes between the marker and the data.
+TEST_F(PcscTraceTest, ExtendedLcIsTracedBeforeTheData)
+{
+    captureWithTrace(true);
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "test-reader");
+    g_reply = {0x90, 0x00};
+
+    (void)conn.transmit(
+        LibreSCRS::SmartCard::Internal::APDUCommand{0x00, 0xA4, 0x00, 0x00, {0xAA, 0xBB}, 0x0400, true});
+
+    EXPECT_TRUE(anyLineContains("apdu=00A40000000002AABB0400")) << "00 A4 00 00 | 00 | Lc 0002 | data | Le 0400";
+}
+
+TEST_F(PcscTraceTest, ShortLeIsTracedAsOneByte)
+{
+    captureWithTrace(true);
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "test-reader");
+    g_reply = {0x90, 0x00};
+
+    (void)conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0x0000, 0xFF));
+
+    EXPECT_TRUE(anyLineContains("apdu=00B00000FFFF")) << "the header's Le byte, then Le again";
+}

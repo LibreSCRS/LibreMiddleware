@@ -34,6 +34,7 @@
 #include "apdu.h"
 #include <LibreSCRS/Export.h>
 #include <smartcard/card_connection.h>
+#include <smartcard/read_length_policy.h>
 #include <LibreSCRS/SmartCard/TransportError.h>
 
 namespace LibreSCRS::SmartCard {
@@ -71,7 +72,21 @@ public:
     PCSCConnection(const PCSCConnection&) = delete;
     PCSCConnection& operator=(const PCSCConnection&) = delete;
 
+    // Sends the command, fitting a READ BINARY's Le to what the card accepts.
     [[nodiscard]] std::expected<APDUResponse, TransportError> transmit(const APDUCommand& cmd) override;
+
+    [[nodiscard]] ReadLengthPolicy* readLengthPolicy() noexcept override
+    {
+        return &lengthPolicy;
+    }
+
+    // Asks the card what Le it accepts, with one plain command, when the state is
+    // Untested or Accepted; otherwise sends nothing. For the caller to use just
+    // before secure messaging starts, inside its transaction: connecting sends no
+    // command, because a plain one would end a secure-messaging session the card
+    // may still hold. A command that cannot be carried leaves the card reading
+    // short; nothing is thrown.
+    void learnReadLengthBeforeSm();
 
     // Every setter below that ARMS a seam -- setTransmitFilter,
     // clearTransmitFilter, setDetachedRawResponder, setDetachedAtr -- is
@@ -215,6 +230,8 @@ private:
     // failure is its own error.
     LIBRESCRS_INTERNAL std::expected<std::vector<std::uint8_t>, TransportError>
     exchangeWire(std::span<const std::uint8_t> command);
+    // One command as given, with the 61xx / 6Cxx follow-ups, and no Le fitting.
+    LIBRESCRS_INTERNAL std::expected<APDUResponse, TransportError> exchangeUnfitted(const APDUCommand& cmd);
     LIBRESCRS_INTERNAL std::expected<void, TransportError> beginOnCard();
     LIBRESCRS_INTERNAL void endOnCard() noexcept;
     LIBRESCRS_INTERNAL std::expected<std::vector<uint8_t>, TransportError> atrFromCard() const;
@@ -231,15 +248,16 @@ private:
 #endif
     DWORD activeProtocol = 0;
     bool callerHoldsTransaction = false;
-    // Test-only members go at the TAIL. This class is not installed, but it is
-    // opted into by include path from several separately-packaged shared
-    // objects, and isTransactionHeld() and the whole of CardTransaction are
-    // header-inline, so every one of them compiles these offsets in for itself.
-    // Appending keeps a new member additive: the class grows, no existing
-    // offset moves, and objects built against either revision agree about
-    // where the production state lives.
+    // New members, test-only or not, go at the TAIL. This class is not
+    // installed, but it is opted into by include path from several
+    // separately-packaged shared objects, and isTransactionHeld() and the whole
+    // of CardTransaction are header-inline, so every one of them compiles these
+    // offsets in for itself. Appending keeps a new member additive: the class
+    // grows, no existing offset moves, and objects built against either
+    // revision agree about where the production state lives.
     LONG detachedTransactionRv = SCARD_S_SUCCESS;
     std::function<void()> detachedReleaseObserver;
+    ReadLengthPolicy lengthPolicy;
     friend class ::LibreSCRS::SmartCard::CardSession;
     friend std::expected<std::unique_ptr<PCSCConnection>, TransportError>
     openRawDiagnostic(const std::string& readerName);

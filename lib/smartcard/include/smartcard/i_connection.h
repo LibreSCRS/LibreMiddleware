@@ -20,6 +20,7 @@ namespace LibreSCRS::SmartCard::Internal {
 // own translation unit anyway.
 struct APDUCommand;
 struct APDUResponse;
+class ReadLengthPolicy;
 
 } // namespace LibreSCRS::SmartCard::Internal
 
@@ -30,9 +31,10 @@ namespace LibreSCRS::SmartCard {
 /// (PlainChannel / PaceChannel / BacChannel) consume this interface
 /// so they can be unit-tested without a real PC/SC stack.
 ///
-/// Only the byte-level transmit primitive is abstracted here, because
-/// that is the only seam channels need; transaction control, ATR retrieval
-/// and reconnect are on CardConnection.
+/// Channels need two things from a connection: the byte-level transmit
+/// primitive and what it has learned about the Le the card accepts
+/// (readLengthPolicy()); transaction control, ATR retrieval and reconnect
+/// are on CardConnection.
 class IConnection
 {
 public:
@@ -54,6 +56,15 @@ public:
     /// PCSCConnection::transmitRaw contract).
     virtual std::expected<Internal::APDUResponse, TransportError>
     transmitRaw(std::span<const std::uint8_t> cmdBytes) = 0;
+
+    /// What this connection has learned about the Le the card accepts, or
+    /// nullptr when it learns nothing (test doubles): then the plain transport
+    /// leaves the Le as given, and a secure-messaging channel asks for at most
+    /// 256.
+    [[nodiscard]] virtual Internal::ReadLengthPolicy* readLengthPolicy() noexcept
+    {
+        return nullptr;
+    }
 };
 
 } // namespace LibreSCRS::SmartCard

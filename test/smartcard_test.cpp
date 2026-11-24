@@ -35,6 +35,15 @@ TEST(APDUTest, ReadBinaryRefusesAnOffsetPast15Bits)
     EXPECT_THROW((void)readBinary(0x8000, 0x10), std::invalid_argument);
 }
 
+// A length past a byte is the extended Le; 0 and 256 are the short Le 00.
+TEST(APDUTest, ReadBinaryLengthPastAByteIsExtended)
+{
+    EXPECT_EQ(readBinary(0x0102, 20000).toBytes(), (std::vector<uint8_t>{0x00, 0xB0, 0x01, 0x02, 0x00, 0x4E, 0x20}));
+    EXPECT_EQ(readBinary(0, 0).toBytes(), (std::vector<uint8_t>{0x00, 0xB0, 0x00, 0x00, 0x00}));
+    EXPECT_EQ(readBinary(0, 256).toBytes(), (std::vector<uint8_t>{0x00, 0xB0, 0x00, 0x00, 0x00}));
+    EXPECT_EQ(readBinary(0, 255).toBytes(), (std::vector<uint8_t>{0x00, 0xB0, 0x00, 0x00, 0xFF}));
+}
+
 TEST(APDUTest, VerifyPINCommand)
 {
     std::array<uint8_t, 4> pin = {0x31, 0x32, 0x33, 0x34};
