@@ -13,7 +13,6 @@
 #include <LibreSCRS/Logging.h>
 #include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
 
-#include <openssl/evp.h>
 #include <openssl/pkcs7.h>
 #include <openssl/x509.h>
 #include <openssl/x509_vfy.h>
@@ -22,10 +21,7 @@ namespace eidcard {
 
 namespace Core = LibreSCRS::RsEId::Core;
 
-using LibreSCRS::Internal::Crypto::EvpMdCtxPtr;
-using LibreSCRS::Internal::Crypto::EvpPkeyPtr;
 using LibreSCRS::Internal::Crypto::Pkcs7Ptr;
-using LibreSCRS::Internal::Crypto::X509Ptr;
 using LibreSCRS::Internal::Crypto::X509StackBorrowedPtr;
 using LibreSCRS::Internal::Crypto::X509StoreCtxPtr;
 
@@ -48,8 +44,6 @@ VerificationResult CardVerifier::verifyCard(LibreSCRS::SmartCard::CardConnection
 {
     try {
         switch (cardType) {
-        case CardType::Apollo2008:
-            return verifyApolloCardCert(conn, reader);
         case CardType::Gemalto2014:
         case CardType::ForeignerIF2020:
             return verifyGemaltoCardCert(conn, reader);
@@ -76,11 +70,6 @@ VerificationResult CardVerifier::verifyFixedData(LibreSCRS::SmartCard::CardConne
                                     {{protocol::FILE_DOCUMENT_DATA_H, protocol::FILE_DOCUMENT_DATA_L},
                                      {protocol::FILE_PERSONAL_DATA_H, protocol::FILE_PERSONAL_DATA_L},
                                      {protocol::FILE_PORTRAIT_H, protocol::FILE_PORTRAIT_L}});
-        case CardType::Apollo2008:
-            return verifyApolloSignature(conn, reader, protocol::FILE_SIGN_FX_H, protocol::FILE_SIGN_FX_L,
-                                         protocol::FILE_CERT_FX_H, protocol::FILE_CERT_FX_L,
-                                         {{protocol::FILE_DOCUMENT_DATA_H, protocol::FILE_DOCUMENT_DATA_L},
-                                          {protocol::FILE_PERSONAL_DATA_H, protocol::FILE_PERSONAL_DATA_L}});
         default:
             return VerificationResult::Unknown;
         }
@@ -103,10 +92,6 @@ VerificationResult CardVerifier::verifyVariableData(LibreSCRS::SmartCard::CardCo
         case CardType::ForeignerIF2020:
             return verifyGemaltoSOD(conn, reader, protocol::FILE_SOD_VX_H, protocol::FILE_SOD_VX_L,
                                     {{protocol::FILE_VARIABLE_DATA_H, protocol::FILE_VARIABLE_DATA_L}});
-        case CardType::Apollo2008:
-            return verifyApolloSignature(conn, reader, protocol::FILE_SIGN_VX_H, protocol::FILE_SIGN_VX_L,
-                                         protocol::FILE_CERT_VX_H, protocol::FILE_CERT_VX_L,
-                                         {{protocol::FILE_VARIABLE_DATA_H, protocol::FILE_VARIABLE_DATA_L}});
         default:
             return VerificationResult::Unknown;
         }
@@ -195,131 +180,6 @@ VerificationResult CardVerifier::verifyGemaltoSOD(LibreSCRS::SmartCard::CardConn
         return report.signer;
     }
     return report.digestsBound ? VerificationResult::Valid : VerificationResult::Invalid;
-}
-
-// --- Apollo card certificate verification ---
-
-VerificationResult CardVerifier::verifyApolloCardCert(LibreSCRS::SmartCard::CardConnection& conn,
-                                                      CardReaderBase& reader)
-{
-    auto userCertData = reader.readFile(conn, protocol::FILE_USER_CERT1_H, protocol::FILE_USER_CERT1_L);
-    if (userCertData.empty())
-        return VerificationResult::Invalid;
-
-    if (verifyCertificateChain(userCertData)) {
-        return VerificationResult::Valid;
-    }
-
-    return VerificationResult::Invalid;
-}
-
-// --- Apollo signature verification ---
-
-VerificationResult CardVerifier::verifyApolloSignature(LibreSCRS::SmartCard::CardConnection& conn,
-                                                       CardReaderBase& reader, uint8_t sigFileH, uint8_t sigFileL,
-                                                       uint8_t certFileH, uint8_t certFileL,
-                                                       const std::vector<std::pair<uint8_t, uint8_t>>& dataFileIds)
-{
-    // 1. Read the signing certificate from card
-    auto certData = reader.readFile(conn, certFileH, certFileL);
-    if (certData.empty())
-        return VerificationResult::Invalid;
-
-    // 2. Verify the signing certificate chain against trusted CAs
-    if (!verifyCertificateChain(certData)) {
-        return VerificationResult::Invalid;
-    }
-
-    // 3. Read the signature from card
-    auto signature = reader.readFile(conn, sigFileH, sigFileL);
-    if (signature.empty())
-        return VerificationResult::Invalid;
-
-    // 4. Read and concatenate all data blocks
-    std::vector<uint8_t> allData;
-    for (const auto& [fh, fl] : dataFileIds) {
-        auto blockData = reader.readFile(conn, fh, fl);
-        allData.insert(allData.end(), blockData.begin(), blockData.end());
-    }
-
-    // 5. Verify RSA signature over data using public key from signing cert
-    if (verifyRSASignature(certData, allData, signature)) {
-        return VerificationResult::Valid;
-    }
-
-    return VerificationResult::Invalid;
-}
-
-// --- OpenSSL helpers ---
-
-bool CardVerifier::verifyCertificateChain(const std::vector<uint8_t>& certDER)
-{
-    if (!trust.native())
-        return false;
-
-    const uint8_t* p = certDER.data();
-    X509Ptr cert(d2i_X509(nullptr, &p, static_cast<long>(certDER.size())));
-    if (!cert) {
-        return false;
-    }
-
-    X509StoreCtxPtr ctx(X509_STORE_CTX_new());
-    if (!ctx) {
-        return false;
-    }
-
-    int rc = X509_STORE_CTX_init(ctx.get(), trust.native(), cert.get(), nullptr);
-    bool valid = false;
-    if (rc == 1) {
-        valid = (X509_verify_cert(ctx.get()) == 1);
-        if (!valid) {
-            const int err = X509_STORE_CTX_get_error(ctx.get());
-            LibreSCRS::log::tracef(LibreSCRS::log::TraceChannel::Sign, "[CardVerifier] X509_verify_cert error: {} ({})",
-                                   X509_verify_cert_error_string(err), err);
-        }
-    }
-
-    return valid;
-}
-
-bool CardVerifier::verifyRSASignature(const std::vector<uint8_t>& certDER, const std::vector<uint8_t>& data,
-                                      const std::vector<uint8_t>& signature)
-{
-    // Parse certificate to extract public key
-    const uint8_t* p = certDER.data();
-    X509Ptr cert(d2i_X509(nullptr, &p, static_cast<long>(certDER.size())));
-    if (!cert)
-        return false;
-
-    EvpPkeyPtr pkey(X509_get_pubkey(cert.get()));
-    if (!pkey)
-        return false;
-
-    EvpMdCtxPtr mdctx(EVP_MD_CTX_new());
-    if (!mdctx) {
-        return false;
-    }
-
-    bool valid = false;
-
-    // Try SHA-256 first (newer cards)
-    if (EVP_DigestVerifyInit(mdctx.get(), nullptr, EVP_sha256(), nullptr, pkey.get()) == 1 &&
-        EVP_DigestVerifyUpdate(mdctx.get(), data.data(), data.size()) == 1 &&
-        EVP_DigestVerifyFinal(mdctx.get(), signature.data(), signature.size()) == 1) {
-        valid = true;
-    }
-
-    // If SHA-256 fails, try SHA-1 (some older Apollo cards may use it)
-    if (!valid) {
-        EVP_MD_CTX_reset(mdctx.get());
-        if (EVP_DigestVerifyInit(mdctx.get(), nullptr, EVP_sha1(), nullptr, pkey.get()) == 1 &&
-            EVP_DigestVerifyUpdate(mdctx.get(), data.data(), data.size()) == 1 &&
-            EVP_DigestVerifyFinal(mdctx.get(), signature.data(), signature.size()) == 1) {
-            valid = true;
-        }
-    }
-
-    return valid;
 }
 
 } // namespace eidcard

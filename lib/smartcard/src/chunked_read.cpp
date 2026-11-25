@@ -16,18 +16,10 @@ namespace LibreSCRS::SmartCard::Internal {
 namespace {
 
 // Default header parser driven by HeaderLengthSpec: little-endian
-// content-length word at a fixed offset, optional "empty file" marker.
+// content-length word at a fixed offset.
 std::optional<HeaderParseResult> parseHeaderFromSpec(std::span<const uint8_t> header, const HeaderLengthSpec& spec)
 {
     if (header.size() < spec.headerSize) {
-        return std::nullopt;
-    }
-
-    // Empty-file marker yields a fully-empty result regardless of the
-    // includeHeaderInResult flag (matches Apollo's legacy behavior, where
-    // a 0xFF marker at offset 4 means "no file content, no header echo").
-    if (spec.hasEmptyMarker && spec.emptyMarkerOffset < spec.headerSize &&
-        header[spec.emptyMarkerOffset] == spec.emptyMarkerValue) {
         return std::nullopt;
     }
 

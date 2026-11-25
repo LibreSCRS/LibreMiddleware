@@ -22,11 +22,6 @@ MF (3F00)
 │   ├── EF.PersonalData   (0F03) — TLV, tags 1558-1566, 1582-1583
 │   ├── EF.VariableData   (0F04) — TLV, tags 1568-1581
 │   ├── EF.Portrait       (0F06) — binary JPEG, ~15 KB
-│   ├── EF.UserCert1      (0F08) — X.509 certificate             [Apollo only]
-│   ├── EF.CertVX         (0F13) — signing cert for variable data [Apollo only]
-│   ├── EF.SignVX          (0F14) — variable data signature        [Apollo only]
-│   ├── EF.CertFX         (0F15) — signing cert for fixed data    [Apollo only]
-│   ├── EF.SignFX          (0F16) — fixed data signature           [Apollo only]
 │   ├── EF.SOD_FX         (0F1C) — PKCS#7 SignedData, fixed data  [Gemalto/IF2020]
 │   └── EF.SOD_VX         (0F1D) — PKCS#7 SignedData, variable    [Gemalto/IF2020]
 ```
@@ -40,10 +35,8 @@ graph TD
   DF --> PER["EF.PersonalData<br/>0F03 — TLV"]
   DF --> VAR["EF.VariableData<br/>0F04 — TLV"]
   DF --> POR["EF.Portrait<br/>0F06 — JPEG"]
-  DF --> APOLLO["Apollo certificate files<br/>0F08, 0F13–0F16"]
   DF --> GEMALTO["Gemalto SOD files<br/>0F1C–0F1D"]
 
-  style APOLLO stroke-dasharray: 5 5
   style GEMALTO stroke-dasharray: 5 5
 ```
 
@@ -51,7 +44,6 @@ graph TD
 
 | Generation | ATR Pattern | Certificate Model |
 |-----------|-------------|-------------------|
-| Apollo (pre-2014) | `3B B9 18 xx xx` | Separate cert + sig files (0F08, 0F13–0F16) |
 | Gemalto (2014+) | `3B FF 94 xx xx` | PKCS#7 SOD files (0F1C–0F1D) |
 | IF2020 | `3B FF 94 xx xx` | Same as Gemalto; uses SERIF/SERRP AID for foreigners |
 

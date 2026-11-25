@@ -43,11 +43,6 @@ struct HeaderLengthSpec
     uint8_t lengthOffset = 2;
     /// Length-word size in bytes (1 or 2). Always little-endian.
     uint8_t lengthBytes = 2;
-    /// If true, treat header[emptyMarkerOffset] == emptyMarkerValue as
-    /// "empty file" and return {} (matches Apollo's 0xFF-at-offset-4 marker).
-    bool hasEmptyMarker = false;
-    uint8_t emptyMarkerOffset = 0;
-    uint8_t emptyMarkerValue = 0xFF;
 };
 
 /// Result returned by a custom header parser.
@@ -76,7 +71,7 @@ struct ChunkedReadOptions
     /// If non-zero, on a READ BINARY failure the loop retries once with
     /// this smaller ceiling before giving up (matches EU VRC behavior).
     uint8_t fallbackChunkSize = 0;
-    /// Prefix used in thrown std::runtime_error messages, e.g. "Apollo".
+    /// Prefix used in thrown std::runtime_error messages, e.g. "Gemalto".
     std::string errorPrefix = "readChunkedFile";
     /// Upper bound on how many bytes one read may allocate for. The file
     /// length comes out of the header, which is card-controlled, so without

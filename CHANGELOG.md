@@ -755,6 +755,7 @@ Notable user-visible changes per release. Format follows
 
 ### Removed
 
+- **Apollo 2008 Serbian eID** — the card is no longer issued or usable.
 - **Credential-prompt API nothing read.** `AuthRequirement::forPreRead`,
   `forChangePin` and `forUnblockPin`, with `Purpose::PreRead`, `ChangePin`
   and `UnblockPin`: no host or plugin asked a credential provider for them —

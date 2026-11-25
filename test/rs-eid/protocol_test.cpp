@@ -11,32 +11,20 @@ TEST(EidProtocolATR, GemaltoMatchesExpectedPrefix)
     // 3B FF 94 00 00 ... — known Gemalto 2014 ATR shape
     std::vector<uint8_t> atr = {0x3B, 0xFF, 0x94, 0x00, 0x00, 0xFF};
     EXPECT_TRUE(isGemaltoATR(atr));
-    EXPECT_FALSE(isApolloATR(atr));
-}
-
-TEST(EidProtocolATR, ApolloMatchesExpectedPrefix)
-{
-    // 3B B9 18 00 ... — known Apollo 2008 ATR shape
-    std::vector<uint8_t> atr = {0x3B, 0xB9, 0x18, 0x00, 0x81, 0x31};
-    EXPECT_TRUE(isApolloATR(atr));
-    EXPECT_FALSE(isGemaltoATR(atr));
 }
 
 TEST(EidProtocolATR, UnknownAtrMatchesNeither)
 {
     std::vector<uint8_t> atr = {0x3B, 0x00, 0x00, 0x00};
-    EXPECT_FALSE(isApolloATR(atr));
     EXPECT_FALSE(isGemaltoATR(atr));
 }
 
 TEST(EidProtocolATR, ShortAtrRejectedDefensively)
 {
     std::vector<uint8_t> atr = {0x3B, 0xFF};
-    EXPECT_FALSE(isApolloATR(atr));
     EXPECT_FALSE(isGemaltoATR(atr));
 
     std::vector<uint8_t> empty;
-    EXPECT_FALSE(isApolloATR(empty));
     EXPECT_FALSE(isGemaltoATR(empty));
 }
 

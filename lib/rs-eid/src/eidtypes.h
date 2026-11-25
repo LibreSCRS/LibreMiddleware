@@ -15,7 +15,7 @@
 
 namespace eidcard {
 
-enum class CardType : int { Unknown = 0, Apollo2008 = 1, Gemalto2014 = 2, ForeignerIF2020 = 3 };
+enum class CardType : int { Unknown = 0, Gemalto2014 = 2, ForeignerIF2020 = 3 };
 
 // The national-data vocabulary lives in the core so the annex reader can share
 // it with the CardEdge readers; these aliases keep eidcard:: call sites intact.

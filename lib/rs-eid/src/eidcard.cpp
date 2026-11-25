@@ -5,7 +5,6 @@
 #include "card_protocol.h"
 #include "card_reader_base.h"
 #include "card_reader_gemalto.h"
-#include "card_reader_apollo.h"
 #include "card_verifier.h"
 #include <apdu.h>
 #include <smartcard/card_connection.h>
@@ -25,9 +24,6 @@ void EIdCard::detectCardType()
     if (protocol::isGemaltoATR(atr)) {
         cardType = CardReaderGemalto::selectApplication(*conn);
         cardReader = std::make_unique<CardReaderGemalto>();
-    } else if (protocol::isApolloATR(atr)) {
-        cardType = CardType::Apollo2008;
-        cardReader = std::make_unique<CardReaderApollo>();
     } else {
         cardType = CardReaderGemalto::selectApplication(*conn);
         if (cardType != CardType::Unknown) {

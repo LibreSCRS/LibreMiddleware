@@ -54,12 +54,6 @@ AppletInfo buildEidInfo()
     df.children.push_back({"EF.VariableData", FILE_VARIABLE_DATA_H, FILE_VARIABLE_DATA_L, "TLV", "", "", false, {}});
     df.children.push_back({"EF.Portrait", FILE_PORTRAIT_H, FILE_PORTRAIT_L, "binary JPEG", "~15KB", "", false, {}});
     df.children.push_back(
-        {"EF.UserCert1", FILE_USER_CERT1_H, FILE_USER_CERT1_L, "X.509 cert", "", "[Apollo only]", false, {}});
-    df.children.push_back({"EF.CertVX", FILE_CERT_VX_H, FILE_CERT_VX_L, "X.509 cert", "", "[Apollo only]", false, {}});
-    df.children.push_back({"EF.SignVX", FILE_SIGN_VX_H, FILE_SIGN_VX_L, "signature", "", "[Apollo only]", false, {}});
-    df.children.push_back({"EF.CertFX", FILE_CERT_FX_H, FILE_CERT_FX_L, "X.509 cert", "", "[Apollo only]", false, {}});
-    df.children.push_back({"EF.SignFX", FILE_SIGN_FX_H, FILE_SIGN_FX_L, "signature", "", "[Apollo only]", false, {}});
-    df.children.push_back(
         {"EF.SOD_FX", FILE_SOD_FX_H, FILE_SOD_FX_L, "PKCS#7 SignedData", "", "[Gemalto/IF2020]", false, {}});
     df.children.push_back(
         {"EF.SOD_VX", FILE_SOD_VX_H, FILE_SOD_VX_L, "PKCS#7 SignedData", "", "[Gemalto/IF2020]", false, {}});

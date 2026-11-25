@@ -7,13 +7,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_library(RsEId STATIC
     src/eidcard.cpp
     src/card_reader_gemalto.cpp
-    src/card_reader_apollo.cpp
     src/card_verifier.cpp
     # Private headers (IDE visibility)
     src/card_protocol.h
     src/card_reader_base.h
     src/card_reader_gemalto.h
-    src/card_reader_apollo.h
     src/card_verifier.h
     src/eidcard.h
     src/eidtypes.h

@@ -36,7 +36,7 @@ std::expected<void, TransportError> PCSCConnection::connect()
     }
 
     // Prefer T=1: natively supports arbitrary-length APDUs (no 255-byte Lc limit).
-    // Fall back to T=0 for readers/cards that only support T=0 (e.g. older Apollo cards).
+    // Fall back to T=0 for readers/cards that only support T=0 (e.g. older cards).
     rv = SCardConnect(context, readerName.c_str(), SCARD_SHARE_SHARED, SCARD_PROTOCOL_T1, &card, &activeProtocol);
     if (rv != SCARD_S_SUCCESS) {
         rv = SCardConnect(context, readerName.c_str(), SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0, &card, &activeProtocol);

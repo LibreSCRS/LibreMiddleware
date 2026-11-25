@@ -70,15 +70,6 @@ TEST(PluginIntegrationTest, GemaltoEidATRMatchesRsEid)
     EXPECT_EQ(p->pluginId(), "rs-eid");
 }
 
-TEST(PluginIntegrationTest, ApolloEidATRMatchesRsEid)
-{
-    CardPluginService registry{pluginDir()};
-    std::vector<uint8_t> apolloATR = {0x3B, 0xB9, 0x18, 0x00};
-    auto p = registry.findPluginForCard(apolloATR);
-    ASSERT_NE(p, nullptr);
-    EXPECT_EQ(p->pluginId(), "rs-eid");
-}
-
 TEST(PluginIntegrationTest, UnknownATRReturnsNull)
 {
     CardPluginService registry{pluginDir()};

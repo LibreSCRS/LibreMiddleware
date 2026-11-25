@@ -36,18 +36,6 @@ constexpr uint8_t FILE_VARIABLE_DATA_L = 0x04;
 constexpr uint8_t FILE_PORTRAIT_H = 0x0F;
 constexpr uint8_t FILE_PORTRAIT_L = 0x06;
 
-// File IDs - Apollo 2008 certificate and signature files
-constexpr uint8_t FILE_USER_CERT1_H = 0x0F; // User Certificate 1
-constexpr uint8_t FILE_USER_CERT1_L = 0x08;
-constexpr uint8_t FILE_CERT_VX_H = 0x0F; // Signing cert for variable data (MOI_CERTo1)
-constexpr uint8_t FILE_CERT_VX_L = 0x13;
-constexpr uint8_t FILE_SIGN_VX_H = 0x0F; // Variable data signature (MOI_SIGN_VX)
-constexpr uint8_t FILE_SIGN_VX_L = 0x14;
-constexpr uint8_t FILE_CERT_FX_H = 0x0F; // Signing cert for fixed data (MOI_CERTm1)
-constexpr uint8_t FILE_CERT_FX_L = 0x15;
-constexpr uint8_t FILE_SIGN_FX_H = 0x0F; // Fixed data signature (MOI_SIGN_FX)
-constexpr uint8_t FILE_SIGN_FX_L = 0x16;
-
 // File IDs - Gemalto 2014 / IF2020 SOD (Security Object Document) files
 constexpr uint8_t FILE_SOD_FX_H = 0x0F; // SOD for fixed data (PKCS#7 SignedData)
 constexpr uint8_t FILE_SOD_FX_L = 0x1C;
@@ -88,15 +76,9 @@ inline constexpr uint16_t TAG_ADDRESS_LABEL = LibreSCRS::RsEId::Core::tags::kAdd
 
 // ATR patterns for card type detection
 // Gemalto (2014+) cards have ATR starting with 3B FF 94 00 00
-// Apollo (pre-2014) cards have ATR starting with 3B B9 18 00
 inline bool isGemaltoATR(const std::vector<uint8_t>& atr)
 {
     return atr.size() >= 5 && atr[0] == 0x3B && atr[1] == 0xFF && atr[2] == 0x94;
-}
-
-inline bool isApolloATR(const std::vector<uint8_t>& atr)
-{
-    return atr.size() >= 4 && atr[0] == 0x3B && atr[1] == 0xB9 && atr[2] == 0x18;
 }
 
 } // namespace eidcard::protocol

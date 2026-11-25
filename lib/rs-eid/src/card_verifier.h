@@ -54,18 +54,6 @@ private:
                                         uint8_t sodFileH, uint8_t sodFileL,
                                         const std::vector<std::pair<uint8_t, uint8_t>>& dataFileIds);
 
-    // Apollo (old card) certificate chain verification
-    VerificationResult verifyApolloCardCert(LibreSCRS::SmartCard::CardConnection& conn, CardReaderBase& reader);
-
-    // Apollo (old card) RSA signature verification
-    VerificationResult verifyApolloSignature(LibreSCRS::SmartCard::CardConnection& conn, CardReaderBase& reader,
-                                             uint8_t sigFileH, uint8_t sigFileL, uint8_t certFileH, uint8_t certFileL,
-                                             const std::vector<std::pair<uint8_t, uint8_t>>& dataFileIds);
-
-    // OpenSSL helpers
-    bool verifyCertificateChain(const std::vector<uint8_t>& certDER);
-    bool verifyRSASignature(const std::vector<uint8_t>& certDER, const std::vector<uint8_t>& data,
-                            const std::vector<uint8_t>& signature);
     LibreSCRS::RsEId::Core::TrustStore trust;
 };
 

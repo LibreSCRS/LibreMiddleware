@@ -2,9 +2,6 @@
   "pluginId": "rs-eid",
   "capabilities": ["IdentityData"],
   "atrs": [
-    { "value": "3B B9 18 00",
-      "mask":  "FF FF FF 00",
-      "comment": "Apollo eID family (4-byte ATR, prefix-matched)" },
     { "value": "3B FF 94 00 00",
       "mask":  "FF FF FF 00 00",
       "comment": "Gemalto eID family (5-byte ATR, prefix-matched)" }

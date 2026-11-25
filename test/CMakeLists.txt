@@ -85,11 +85,10 @@ target_compile_definitions(Pkcs15ProbeEfDirTests PRIVATE LIBRESCRS_INTERNAL_BUIL
 gtest_discover_tests(Pkcs15ProbeEfDirTests)
 
 # rs-eid driver unit tests (flagship Serbian eID coverage).
-# Drives CardReaderApollo / CardReaderGemalto / CardVerifier through a
+# Drives CardReaderGemalto / CardVerifier through a
 # detached PCSCConnection with a TransmitFilter intercepting every APDU.
 add_executable(RsEidDriverTests
     rs-eid/protocol_test.cpp
-    rs-eid/card_reader_apollo_test.cpp
     rs-eid/card_reader_gemalto_test.cpp
     rs-eid/card_verifier_test.cpp
     rs-eid/card_verifier_pin_test.cpp
@@ -139,10 +138,10 @@ target_compile_definitions(RsEidCoreTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(RsEidCoreTests)
 
 # rs-eid plugin test: drives the real, dlopen'd rs-eid-plugin.so through
-# CardPluginService against a detached PCSCConnection (Apollo protocol,
-# scripted via TransmitFilter + the test-only setDetachedAtr seam). Covers
+# CardPluginService against a detached PCSCConnection (CardEdge protocol,
+# scripted via CardEdgeFileRig + TransmitFilter + the test-only SessionAccess::setAtr seam). Covers
 # readCard()'s CardData shape end to end -- unlike RsEidDriverTests above,
-# which exercises the CardReaderApollo/CardVerifier drivers directly.
+# which exercises the CardReaderGemalto/CardVerifier drivers directly.
 add_executable(RsEidPluginTests
     rs-eid/eid_card_plugin_verification_test.cpp
 )

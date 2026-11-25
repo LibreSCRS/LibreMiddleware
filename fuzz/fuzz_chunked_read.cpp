@@ -96,15 +96,12 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
 {
     const std::span<const std::uint8_t> image(data, size);
 
-    // Shape 1: six-byte header, u16 length at offset 4, 0xFF-at-4 means empty.
+    // Shape 1: six-byte header, u16 length at offset 4.
     {
         SC::ChunkedReadOptions opts;
         opts.headerSpec.headerSize = 6;
         opts.headerSpec.lengthOffset = 4;
         opts.headerSpec.lengthBytes = 2;
-        opts.headerSpec.hasEmptyMarker = true;
-        opts.headerSpec.emptyMarkerOffset = 4;
-        opts.headerSpec.emptyMarkerValue = 0xFF;
         opts.includeHeaderInResult = true;
         opts.errorPrefix = "fuzz/spec6";
         driveOnce(image, opts);

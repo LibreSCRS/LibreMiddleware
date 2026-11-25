@@ -15,7 +15,7 @@ struct FileNode
     uint8_t fidHi = 0, fidLo = 0; // e.g. 0x0F, 0x02
     std::string format;           // e.g. "TLV", "binary JPEG", "X.509"
     std::string sizeEstimate;     // e.g. "~120B"
-    std::string note;             // e.g. "[Apollo only]"
+    std::string note;             // e.g. "[Gemalto/IF2020]"
     bool isDir = false;
     std::vector<FileNode> children;
 };

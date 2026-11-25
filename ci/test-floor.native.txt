@@ -89,7 +89,7 @@ Pkcs15ProbeEfDirTests 2
 Pkcs15ProfileReadCensusTests 43
 Pkcs15ReadTokenInfoPartialTests 2
 PluginAbiVersionTest 1
-PluginIntegrationTests 8
+PluginIntegrationTests 7
 PluginSessionPathTests 13
 PluginSigningKeyTests 15
 PluginTests 24
@@ -98,7 +98,7 @@ ProbeOrderTests 3
 ReadLengthPolicyTests 26
 RevocationClientTests 19
 RsEidCoreTests 48
-RsEidDriverTests 39
+RsEidDriverTests 30
 RsEidPluginTests 1
 SecretParameterConceptTests 1
 SecretWipeOnFreeTests 12

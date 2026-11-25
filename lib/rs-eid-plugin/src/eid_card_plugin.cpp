@@ -75,9 +75,9 @@ LibreSCRS::Plugin::CardFieldGroup documentGroup(const eidcard::DocumentData& doc
 
 // 4.0 hardening: pluginId / capabilities / kAtrs come
 // from the per-plugin manifest.json via the generated manifest.h header.
-// The two known card-family ATRs (Apollo, Gemalto) are encoded with masks
-// in the manifest — the meaningful prefix bytes get mask 0xFF and the
-// trailing bytes mask 0x00 (don't care).
+// The Gemalto card-family ATR is encoded with a mask in the manifest — the
+// meaningful prefix bytes get mask 0xFF and the trailing bytes mask 0x00
+// (don't care).
 
 class EidCardPlugin final : public LibreSCRS::Plugin::CardPlugin
 {
@@ -150,9 +150,6 @@ public:
                 meta.groupLabel = "Card Metadata";
                 std::string ct;
                 switch (cardType) {
-                case eidcard::CardType::Apollo2008:
-                    ct = "Apollo2008";
-                    break;
                 case eidcard::CardType::Gemalto2014:
                     ct = "Gemalto2014";
                     break;

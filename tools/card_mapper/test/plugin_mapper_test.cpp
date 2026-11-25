@@ -74,6 +74,6 @@ TEST(PluginMapper, EidRootNodeHasChildren)
     EXPECT_FALSE(info.rootNode.children.empty());
     // MF has one child DF
     EXPECT_EQ(info.rootNode.children.size(), 1u);
-    // DF has 11 children (data files)
-    EXPECT_EQ(info.rootNode.children[0].children.size(), 11u);
+    // DF has 6 children (data files)
+    EXPECT_EQ(info.rootNode.children[0].children.size(), 6u);
 }
