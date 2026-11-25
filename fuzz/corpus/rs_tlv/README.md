@@ -4,8 +4,8 @@
 Both Serbian card families read their fields through this reader: a
 little-endian 16-bit tag, a 16-bit length, and a UTF-16 value. The tag numbers
 used here are the ones the readers really ask for, defined in
-`lib/rs-eid-core/src/rs_tags.h` and reached through `protocol::TAG_*` in
-`lib/rs-eid/src/card_protocol.h`.
+`lib/rs-eid-core/src/rs_tags.h` and listed per document type in
+`lib/rs-eid-core/src/rs_profiles.cpp`.
 
 | file | what it is |
 |---|---|

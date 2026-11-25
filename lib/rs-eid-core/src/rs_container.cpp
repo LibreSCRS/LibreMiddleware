@@ -15,6 +15,34 @@ namespace {
     return static_cast<std::uint16_t>(b[i] | (b[i + 1] << 8));
 }
 
+// An inner TLV tag may itself start with 0x30 (0x0830 on the one-slot signed
+// object of the official ID), so the first byte alone does not say "SEQUENCE".
+// A real CMS is indefinite-length, or its definite length spans the content.
+// Two known limits, both failing closed: a bare definite-length CMS followed by
+// trailing bytes is taken for a wrapper and stripped (the parse then fails), and
+// a wrapper tag 0x8030 reads as an indefinite CMS (d2i then rejects it).
+[[nodiscard]] bool startsWithCms(std::span<const std::uint8_t> content) noexcept
+{
+    if (content.size() < 2 || content[0] != 0x30) {
+        return false;
+    }
+    if (content[1] == 0x80) {
+        return true;
+    }
+    if (content[1] < 0x80) {
+        return content.size() == 2u + content[1];
+    }
+    const std::size_t octets = content[1] & 0x7Fu;
+    if (octets > 4 || content.size() < 2 + octets) {
+        return false;
+    }
+    std::size_t length = 0;
+    for (std::size_t i = 0; i < octets; ++i) {
+        length = (length << 8) | content[2 + i];
+    }
+    return content.size() == 2 + octets + length;
+}
+
 } // namespace
 
 std::optional<std::uint16_t> outerTag(std::span<const std::uint8_t> file) noexcept
@@ -39,8 +67,7 @@ std::optional<std::span<const std::uint8_t>> leadingTlv(std::span<const std::uin
 
 std::span<const std::uint8_t> innerTlvPayload(std::span<const std::uint8_t> content) noexcept
 {
-    // 0x30 is an ASN.1 SEQUENCE, i.e. the CMS already: nothing wraps it.
-    if (content.size() <= kContainerHeaderSize || content[0] == 0x30) {
+    if (content.size() <= kContainerHeaderSize || startsWithCms(content)) {
         return content;
     }
     return content.subspan(kContainerHeaderSize);

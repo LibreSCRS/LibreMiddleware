@@ -6,6 +6,7 @@
 #include <array>
 #include <tlv.h>
 #include <ber.h>
+#include <text_encoding.h>
 #include <smartcard/chunked_read.h>
 
 #include "fake_pcsc_connection.h"
@@ -656,4 +657,24 @@ TEST(ChunkedReadTest, FallbackLengthAppliesAfterARefusedRead)
     ASSERT_GE(conn.history().size(), 3u);
     EXPECT_EQ(conn.history()[1].le, 1000u); // refused
     EXPECT_EQ(conn.history()[2].le, 100u);
+}
+
+// --- UTF-16LE decoder ---
+
+TEST(TextEncodingTest, DecodesAsciiCyrillicAndLatinExtended)
+{
+    // "A", "Ј" (U+0408), "š" (U+0161)
+    const std::vector<uint8_t> in = {0x41, 0x00, 0x08, 0x04, 0x61, 0x01};
+    EXPECT_EQ(decodeUtf16Le(in), "A\xD0\x88\xC5\xA1");
+}
+
+TEST(TextEncodingTest, DropsATrailingOddByte)
+{
+    const std::vector<uint8_t> in = {0x31, 0x00, 0x32};
+    EXPECT_EQ(decodeUtf16Le(in), "1");
+}
+
+TEST(TextEncodingTest, EmptyInputGivesEmptyString)
+{
+    EXPECT_TRUE(decodeUtf16Le(std::vector<uint8_t>{}).empty());
 }

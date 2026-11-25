@@ -50,6 +50,8 @@ enum class FieldType : std::uint8_t { Text, Date, Photo, Binary };
 // "presence"              — emrtd-plugin: presence/liveness indicator group
 // "registration"          — eu-vrc-plugin: vehicle registration data
 // "security_status"       — emrtd-plugin: passive/active authentication verdicts
+// "service"               — rs-eid-plugin: official service ID duty data (status, badge,
+//                           rank, organisational unit, position, service address)
 // "signature"             — emrtd-plugin: holder signature image
 // "taxpayer"              — rs-health-plugin: taxpayer identification data
 // "token"                 — opensc-plugin, pkcs15-plugin: PKCS#15 token info

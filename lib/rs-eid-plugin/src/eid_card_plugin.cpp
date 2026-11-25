@@ -3,6 +3,7 @@
 
 #include <eidcard.h>
 #include <eidtypes.h>
+#include <rs_document_profile.h>
 #include <LibreSCRS/Auth/ErrorKeys.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/PluginExport.h>
@@ -17,59 +18,14 @@
 
 namespace {
 
-LibreSCRS::Plugin::CardFieldGroup personalGroup(const eidcard::FixedPersonalData& fp)
+// A group as the profile built it, carried over unchanged.
+LibreSCRS::Plugin::CardFieldGroup toCardGroup(const LibreSCRS::RsEId::Core::ProfileGroup& built)
 {
     LibreSCRS::Plugin::CardFieldGroup group;
-    group.groupKey = "personal";
-    group.groupLabel = "Personal Data";
-
-    group.addText("personal_number", "Personal Number", fp.personalNumber);
-    group.addText("surname", "Surname", fp.surname);
-    group.addText("given_name", "Given Name", fp.givenName);
-    group.addText("parent_given_name", "Parent Given Name", fp.parentGivenName);
-    group.addText("sex", "Sex", fp.sex);
-    group.addText("place_of_birth", "Place of Birth", fp.placeOfBirth);
-    group.addText("community_of_birth", "Community of Birth", fp.communityOfBirth);
-    group.addText("state_of_birth", "State of Birth", fp.stateOfBirth);
-    group.addText("date_of_birth", "Date of Birth", fp.dateOfBirth);
-    group.addText("nationality", "Nationality", fp.nationalityFull);
-    group.addText("status_of_foreigner", "Status of Foreigner", fp.statusOfForeigner);
-
-    return group;
-}
-
-LibreSCRS::Plugin::CardFieldGroup addressGroup(const eidcard::VariablePersonalData& vp)
-{
-    LibreSCRS::Plugin::CardFieldGroup group;
-    group.groupKey = "address";
-    group.groupLabel = "Address";
-
-    group.addText("state", "State", vp.state);
-    group.addText("community", "Community", vp.community);
-    group.addText("place", "Place", vp.place);
-    group.addText("street", "Street", vp.street);
-    group.addText("house_number", "House Number", vp.houseNumber);
-    group.addText("house_letter", "House Letter", vp.houseLetter);
-    group.addText("entrance", "Entrance", vp.entrance);
-    group.addText("floor", "Floor", vp.floor);
-    group.addText("apartment_number", "Apartment Number", vp.apartmentNumber);
-
-    return group;
-}
-
-LibreSCRS::Plugin::CardFieldGroup documentGroup(const eidcard::DocumentData& doc)
-{
-    LibreSCRS::Plugin::CardFieldGroup group;
-    group.groupKey = "document";
-    group.groupLabel = "Document Data";
-
-    group.addText("doc_reg_no", "Registration Number", doc.docRegNo);
-    group.addText("document_type", "Document Type", doc.documentType);
-    group.addText("document_serial_number", "Serial Number", doc.documentSerialNumber);
-    group.addText("issuing_date", "Issuing Date", doc.issuingDate);
-    group.addText("expiry_date", "Expiry Date", doc.expiryDate);
-    group.addText("issuing_authority", "Issuing Authority", doc.issuingAuthority);
-
+    group.groupKey = built.key;
+    group.groupLabel = built.label;
+    for (const auto& f : built.fields)
+        group.addText(f.key, f.label, f.value);
     return group;
 }
 
@@ -117,9 +73,9 @@ public:
     {
         LibreSCRS::SmartCard::SessionConnection conn(session);
         try {
-            // Try to detect card type by selecting eID applet AIDs
+            // The card is ours when it accepts one of the document types' AIDs.
             eidcard::EIdCard card(conn);
-            return card.getCardType() != eidcard::CardType::Unknown;
+            return true;
         } catch (...) {
             return false;
         }
@@ -142,52 +98,28 @@ public:
                 data.groups.push_back(std::move(group));
             };
 
-            // 1. Meta (card type detection — fast, single SELECT)
-            auto cardType = card.getCardType();
+            // 1. Meta (document type: fast, the AID that was selected)
+            const auto& profile = card.profile();
             {
                 LibreSCRS::Plugin::CardFieldGroup meta;
                 meta.groupKey = "meta";
                 meta.groupLabel = "Card Metadata";
-                std::string ct;
-                switch (cardType) {
-                case eidcard::CardType::Gemalto2014:
-                    ct = "Gemalto2014";
-                    break;
-                case eidcard::CardType::ForeignerIF2020:
-                    ct = "ForeignerIF2020";
-                    break;
-                default:
-                    ct = "Unknown";
-                    break;
-                }
+                const std::string ct{profile.code};
                 meta.fields.push_back(
                     {"card_type", "Card Type", LibreSCRS::Plugin::FieldType::Text, {ct.begin(), ct.end()}});
                 emitGroup(std::move(meta));
             }
 
-            // 2. Personal data (card I/O: readFixedPersonalData)
-            auto fixedPersonal = card.readFixedPersonalData();
-            emitGroup(personalGroup(fixedPersonal));
-
-            // 3. Address (card I/O: readVariablePersonalData)
-            auto variablePersonal = card.readVariablePersonalData();
-            {
-                auto addrGrp = addressGroup(variablePersonal);
-                if (!variablePersonal.addressDate.empty()) {
-                    addrGrp.fields.push_back(
-                        {"address_date",
-                         "Address Date",
-                         LibreSCRS::Plugin::FieldType::Text,
-                         {variablePersonal.addressDate.begin(), variablePersonal.addressDate.end()}});
-                }
-                emitGroup(std::move(addrGrp));
+            // 2. Every group of the profile, in its order, as soon as its files
+            //    are read. A group the card carries nothing of is not emitted.
+            namespace Core = LibreSCRS::RsEId::Core;
+            for (const auto& spec : profile.groups) {
+                const auto& files = card.load(Core::groupFiles(profile, spec.key, Core::Surface::CardEdge));
+                if (auto built = Core::buildGroup(profile, spec.key, files, Core::Surface::CardEdge))
+                    emitGroup(toCardGroup(*built));
             }
 
-            // 4. Document (card I/O: readDocumentData)
-            auto documentData = card.readDocumentData();
-            emitGroup(documentGroup(documentData));
-
-            // 5. Photo (card I/O: readPortrait — slowest)
+            // 3. Photo (slowest, so after the text)
             auto photo = card.readPortrait();
             if (!photo.empty()) {
                 LibreSCRS::Plugin::CardFieldGroup photoGroup;
@@ -197,7 +129,7 @@ public:
                 emitGroup(std::move(photoGroup));
             }
 
-            // 6. Verification — feed trust anchors from the injected TrustStore.
+            // 4. Verification — feed trust anchors from the injected TrustStore.
             //    enumerableAnchors() returns the provider anchors only (bundled certs +
             //    Trusted-List-derived anchors); the OS system store is NOT included (it
             //    is consulted only by TrustStore::validateChain, a different surface).

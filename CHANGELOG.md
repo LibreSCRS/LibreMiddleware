@@ -16,6 +16,16 @@ Notable user-visible changes per release. Format follows
   fits a READ BINARY's Le to what the card accepts, including under secure
   messaging, and repeats once with a shorter Le if the card refuses.
 
+- **Serbian residence permit (`RP`) and official service ID (`EL`) cards.** A
+  residence permit now reads as a document of its own, with its document name,
+  purpose of stay and note. The official service ID is read through its own
+  application, with its personal, service (status, badge number, rank,
+  organisational unit, position, service address) and document groups, blood
+  group and photograph. Both appear in the plugin's group list, and a new
+  `service` group carries the service data. The identity card, identity card
+  for foreigners and residence permit also gain `card_number` and
+  `state_of_birth_code` where the card has them.
+
 - **Test support for projects built on LibreSCRS:
   `LibreSCRS::SmartCardTesting`** (`<LibreSCRS/SmartCard/testing/CardSessionTesting.h>`).
   A static archive in the development files with
@@ -362,6 +372,14 @@ Notable user-visible changes per release. Format follows
   докумената у апликацијама је и раније тражило PIN сваки пут. Остале картице
   су непромењене.
 
+- **`card_type` is the document type.** The Serbian eID plugin reports `ID`,
+  `IF`, `RP` or `EL`, taken from the document description of the application
+  that answered the select, instead of a generation guess. The ATR does not
+  identify the type, so the card is recognised by trying each document's
+  application identifier in turn.
+- **The Serbian annex of the dual-interface ID reads through the same
+  description as the main application.** Its output is unchanged.
+
 - **A card operation that throws inside a plugin no longer throws at its
   host.** One plugin caught every exception, another let its PIN and
   certificate calls throw and left the host to catch. `CardPlugin` now settles
@@ -569,6 +587,13 @@ Notable user-visible changes per release. Format follows
   already believes empty is now dropped instead of held, so the card-inserted
   that follows is delivered. A removed/inserted flap on a card the subscriber
   knows is present is still suppressed.
+
+- **Reading a Serbian residence permit no longer fails** when the card has no
+  address-registration field.
+- **Serbian Security Objects bind each file to its own position.** A digest
+  found anywhere in the object no longer counts, so a file cannot stand in for
+  another. An object of a layout nobody has measured is reported as unknown
+  rather than guessed at.
 
 - **Each PACE protocol an EF.CardAccess offers keeps its own domain
   parameters.** When a document advertised the same PACE protocol twice over

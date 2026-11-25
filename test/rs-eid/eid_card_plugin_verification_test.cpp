@@ -8,15 +8,9 @@
 //
 // Drives the real, dlopen'd rs-eid-plugin.so through CardPluginService,
 // against a detached PCSCConnection scripted as a SERID card by
-// CardEdgeFileRig. Each of the data files (document, personal, address) is a
-// single-tag TLV blob carrying that group's first field non-empty --
-// CardFieldGroup::addText() throws if its very first call is both empty AND
-// the group has no field yet, so an all-empty fixture cannot reach the
-// verification block this test targets. The portrait is a minimal synthetic
-// JPEG stub: a missing file would send the Gemalto reader down its reconnect
-// retry, which a detached connection cannot do. No TrustStore is
-// injected, so verifyCard/verifyFixedData/verifyVariableData resolve to
-// "unknown" without any further APDU.
+// CardEdgeFileRig, with the synthetic citizen card of document_fixtures.h. No
+// TrustStore is injected, so verifyCard/verifyFixedData/verifyVariableData
+// resolve to "unknown" without any further APDU.
 
 #include <gtest/gtest.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
@@ -27,8 +21,10 @@
 #include <session_access.h>
 #include <pcsc_connection.h>
 
-#include "card_protocol.h"
 #include "cardedge_file_rig.h"
+#include "rs-eid/document_fixtures.h"
+
+#include <rs_document_profile.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -64,34 +60,6 @@ std::vector<std::uint8_t> serIdAtr()
     return {0x3B, 0xFF, 0x94, 0x00, 0x00, 0x81, 0x31, 0x80, 0x43};
 }
 
-// Little-endian 16-bit tag + little-endian 16-bit length + value, matching
-// the custom TLV format lib/smartcard/src/tlv.cpp parses.
-std::vector<std::uint8_t> encodeSingleFieldTlv(std::uint16_t tag, std::string_view value)
-{
-    std::vector<std::uint8_t> out;
-    out.push_back(static_cast<std::uint8_t>(tag & 0xFF));
-    out.push_back(static_cast<std::uint8_t>((tag >> 8) & 0xFF));
-    out.push_back(static_cast<std::uint8_t>(value.size() & 0xFF));
-    out.push_back(static_cast<std::uint8_t>((value.size() >> 8) & 0xFF));
-    out.insert(out.end(), value.begin(), value.end());
-    return out;
-}
-
-// A CardEdge file as stored: 4-byte header (two arbitrary bytes, LE u16
-// content length) followed by the content.
-std::vector<std::uint8_t> withHeader(const std::vector<std::uint8_t>& content)
-{
-    std::vector<std::uint8_t> out{0x00, 0x00, static_cast<std::uint8_t>(content.size() & 0xFF),
-                                  static_cast<std::uint8_t>((content.size() >> 8) & 0xFF)};
-    out.insert(out.end(), content.begin(), content.end());
-    return out;
-}
-
-std::uint16_t fid(std::uint8_t hi, std::uint8_t lo)
-{
-    return static_cast<std::uint16_t>((hi << 8) | lo);
-}
-
 // Counts every occurrence of @p key across all groups in @p data, returning
 // the (possibly repeated) groupKey each occurrence was found in.
 std::vector<std::string> findAllOccurrences(const LibreSCRS::Plugin::CardData& data, const std::string& key)
@@ -121,20 +89,11 @@ TEST(RsEidPluginVerificationTest, VerificationFieldsAppearExactlyOnceInVerificat
     // The plugin reads the ATR the session recorded when it opened.
     LibreSCRS::SmartCard::Testing::SessionAccess::setAtr(*session, serIdAtr());
 
-    using namespace eidcard::protocol;
     LibreSCRS::RsEId::Test::CardEdgeFileRig rig;
-    rig.acceptAid(AID_SERID);
-    // Each file carries exactly the group builder's first field, non-empty --
-    // enough to satisfy CardFieldGroup::addText()'s empty-value guard; every
-    // later field in that group is empty and no-ops safely once the group is
-    // non-empty.
-    rig.addFile(fid(FILE_PERSONAL_DATA_H, FILE_PERSONAL_DATA_L),
-                withHeader(encodeSingleFieldTlv(TAG_PERSONAL_NUMBER, "0101990710000")));
-    rig.addFile(fid(FILE_VARIABLE_DATA_H, FILE_VARIABLE_DATA_L), withHeader(encodeSingleFieldTlv(TAG_STATE, "Serbia")));
-    rig.addFile(fid(FILE_DOCUMENT_DATA_H, FILE_DOCUMENT_DATA_L),
-                withHeader(encodeSingleFieldTlv(TAG_DOC_REG_NO, "000000000")));
-    // Portrait: 4-byte TLV header the reader trims, then a JPEG stub.
-    rig.addFile(fid(FILE_PORTRAIT_H, FILE_PORTRAIT_L), withHeader({0x00, 0x00, 0x02, 0x00, 0xFF, 0xD8}));
+    const auto& id = LibreSCRS::RsEId::Core::documentProfiles()[0];
+    rig.acceptAid({id.aid.begin(), id.aid.end()});
+    for (auto& [fid, bytes] : LibreSCRS::RsEId::Test::citizenFiles())
+        rig.addFile(fid, std::move(bytes));
     conn.setTransmitFilter([&rig](const APDUCommand& cmd) { return rig(cmd); });
 
     auto rr = plugin->readCard(*session);

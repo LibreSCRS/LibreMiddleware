@@ -12,6 +12,7 @@ add_library(SmartCard_Impl STATIC
     src/tlv.cpp
     src/ber.cpp
     src/date_format.cpp
+    src/text_encoding.cpp
     src/chunked_read.cpp
     src/read_length_policy.cpp
     src/monitor.cpp
@@ -24,6 +25,7 @@ add_library(SmartCard_Impl STATIC
     src/ber.h
     src/tlv.h
     src/date_format.h
+    src/text_encoding.h
     src/ipcsc_scan_provider.h
     src/pcsc_scan_provider.h
     src/pcsc_connection.h

@@ -9,8 +9,6 @@ add_library(RsEId STATIC
     src/card_reader_gemalto.cpp
     src/card_verifier.cpp
     # Private headers (IDE visibility)
-    src/card_protocol.h
-    src/card_reader_base.h
     src/card_reader_gemalto.h
     src/card_verifier.h
     src/eidcard.h

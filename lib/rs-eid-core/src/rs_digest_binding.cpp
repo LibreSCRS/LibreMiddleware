@@ -19,6 +19,21 @@ using LibreSCRS::Internal::Crypto::EvpMdCtxPtr;
     return CRYPTO_memcmp(digest.data(), content.data() + slot * kDigestSize, kDigestSize) == 0;
 }
 
+[[nodiscard]] bool candidatesMatchSlot(std::span<const std::uint8_t> content, std::size_t slot,
+                                       const BlockCandidates& candidates)
+{
+    for (const auto& candidate : candidates) {
+        if (candidate.empty()) {
+            continue;
+        }
+        const auto digest = sha256(candidate);
+        if (digest && slotEquals(content, slot, *digest)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 std::optional<std::array<std::uint8_t, kDigestSize>> sha256(std::span<const std::uint8_t> data)
@@ -37,47 +52,24 @@ std::optional<std::array<std::uint8_t, kDigestSize>> sha256(std::span<const std:
     return out;
 }
 
-bool matchDigests(std::span<const std::uint8_t> signedContent, std::span<const BlockCandidates> blocks,
-                  DigestBinding binding)
+bool matchDigests(std::span<const std::uint8_t> signedContent, std::span<const SlotInput> slots)
 {
-    if (signedContent.size() < kDigestSize || blocks.empty()) {
-        return false;
-    }
-    const std::size_t slots = signedContent.size() / kDigestSize;
-
-    // Both rules below belong to Positional alone. The shipped CardEdge path
-    // truncates a ragged tail and never compared block count to slot count, and
-    // this must not move behaviour on generations already in the field.
-    if (binding == DigestBinding::Positional && (signedContent.size() % kDigestSize != 0 || blocks.size() > slots)) {
+    if (signedContent.size() < kDigestSize || slots.empty() || signedContent.size() != slots.size() * kDigestSize) {
         return false;
     }
 
-    for (std::size_t i = 0; i < blocks.size(); ++i) {
-        bool matched = false;
-        for (const auto& candidate : blocks[i]) {
-            if (candidate.empty()) {
-                continue;
-            }
-            const auto digest = sha256(candidate);
-            if (!digest) {
-                continue;
-            }
-            if (binding == DigestBinding::Positional) {
-                matched = i < slots && slotEquals(signedContent, i, *digest);
-            } else {
-                for (std::size_t slot = 0; slot < slots && !matched; ++slot) {
-                    matched = slotEquals(signedContent, slot, *digest);
-                }
-            }
-            if (matched) {
-                break;
-            }
+    bool checkedOne = false;
+    for (std::size_t i = 0; i < slots.size(); ++i) {
+        const auto* candidates = std::get_if<BlockCandidates>(&slots[i]);
+        if (!candidates) {
+            continue; // SkipSlot: counted, not examined
         }
-        if (!matched) {
+        if (!candidatesMatchSlot(signedContent, i, *candidates)) {
             return false;
         }
+        checkedOne = true;
     }
-    return true;
+    return checkedOne;
 }
 
 } // namespace LibreSCRS::RsEId::Core

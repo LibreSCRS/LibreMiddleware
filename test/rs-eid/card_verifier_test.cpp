@@ -2,18 +2,16 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 //
 // CardVerifier unit tests. Covers construction with and without a cert folder,
-// addCertificate (DER intake), filesystem-folder loading, and the high-level
-// dispatch entry points with CardType::Unknown (which exits before any APDU).
+// addCertificate (DER intake), filesystem-folder loading, and the verdicts when
+// the signed object itself was not read (no card access: the verifier judges
+// files already read).
 
 #include <gtest/gtest.h>
 
-#include "card_protocol.h"
-#include "card_reader_base.h"
 #include "card_verifier.h"
 #include "eidtypes.h"
 
-#include "apdu.h"
-#include "pcsc_connection.h"
+#include <rs_document_profile.h>
 
 #include <cstdint>
 #include <filesystem>
@@ -34,18 +32,10 @@ std::vector<uint8_t> readFile(const fs::path& p)
     return std::vector<uint8_t>((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
 }
 
-class NullReader : public eidcard::CardReaderBase
+const LibreSCRS::RsEId::Core::DocumentProfile& citizenProfile()
 {
-public:
-    std::vector<uint8_t> readFile(LibreSCRS::SmartCard::CardConnection&, uint8_t, uint8_t) override
-    {
-        return {};
-    }
-    std::vector<uint8_t> readFileRaw(LibreSCRS::SmartCard::CardConnection&, uint8_t, uint8_t) override
-    {
-        return {};
-    }
-};
+    return LibreSCRS::RsEId::Core::documentProfiles()[0];
+}
 
 } // namespace
 
@@ -103,41 +93,21 @@ TEST(CardVerifierTest, LoadFromFolderHandlesSuffixFilter)
     fs::remove_all(tmpRoot);
 }
 
-TEST(CardVerifierTest, VerifyCardUnknownTypeReturnsUnknownWithoutAnyApdu)
+// A signed object that was not read (absent, protected) vouches for nothing.
+TEST(CardVerifierTest, VerifyCardWithoutSignedObjectIsInvalid)
 {
     eidcard::CardVerifier v("");
-    LibreSCRS::SmartCard::Internal::PCSCConnection conn(LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag{},
-                                                        "fake");
-    int callCount = 0;
-    conn.setTransmitFilter([&](const auto&) {
-        ++callCount;
-        return LibreSCRS::SmartCard::Internal::APDUResponse{};
-    });
-
-    NullReader reader;
-    auto result = v.verifyCard(conn, reader, eidcard::CardType::Unknown);
-    EXPECT_EQ(result, eidcard::VerificationResult::Unknown);
-    EXPECT_EQ(callCount, 0);
+    EXPECT_EQ(v.verifyCard(citizenProfile(), {}), eidcard::VerificationResult::Invalid);
 }
 
-TEST(CardVerifierTest, VerifyFixedDataUnknownTypeReturnsUnknown)
+TEST(CardVerifierTest, VerifyFixedDataWithoutSignedObjectIsInvalid)
 {
     eidcard::CardVerifier v("");
-    LibreSCRS::SmartCard::Internal::PCSCConnection conn(LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag{},
-                                                        "fake");
-
-    NullReader reader;
-    auto result = v.verifyFixedData(conn, reader, eidcard::CardType::Unknown);
-    EXPECT_EQ(result, eidcard::VerificationResult::Unknown);
+    EXPECT_EQ(v.verifyFixedData(citizenProfile(), {}), eidcard::VerificationResult::Invalid);
 }
 
-TEST(CardVerifierTest, VerifyVariableDataUnknownTypeReturnsUnknown)
+TEST(CardVerifierTest, VerifyVariableDataWithoutSignedObjectIsInvalid)
 {
     eidcard::CardVerifier v("");
-    LibreSCRS::SmartCard::Internal::PCSCConnection conn(LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag{},
-                                                        "fake");
-
-    NullReader reader;
-    auto result = v.verifyVariableData(conn, reader, eidcard::CardType::Unknown);
-    EXPECT_EQ(result, eidcard::VerificationResult::Unknown);
+    EXPECT_EQ(v.verifyVariableData(citizenProfile(), {}), eidcard::VerificationResult::Invalid);
 }

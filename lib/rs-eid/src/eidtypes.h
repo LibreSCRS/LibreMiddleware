@@ -7,21 +7,10 @@
 
 #pragma once
 
-#include <cstdint>
-#include <string>
-#include <vector>
-
 #include <rs_types.h>
 
 namespace eidcard {
 
-enum class CardType : int { Unknown = 0, Gemalto2014 = 2, ForeignerIF2020 = 3 };
-
-// The national-data vocabulary lives in the core so the annex reader can share
-// it with the CardEdge readers; these aliases keep eidcard:: call sites intact.
-using DocumentData = LibreSCRS::RsEId::Core::DocumentData;
-using FixedPersonalData = LibreSCRS::RsEId::Core::FixedPersonalData;
-using VariablePersonalData = LibreSCRS::RsEId::Core::VariablePersonalData;
 using PhotoData = LibreSCRS::RsEId::Core::PhotoData;
 
 // The verdict type belongs to the core, which owns the trust decision; this

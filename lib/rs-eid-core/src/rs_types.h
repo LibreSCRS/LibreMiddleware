@@ -23,49 +23,6 @@ enum class VerificationResult : std::uint8_t {
     Invalid  ///< signature or chain verification failed
 };
 
-// --- Serbian national data, as the card carries it ---
-
-struct DocumentData
-{
-    std::string docRegNo;
-    std::string documentType;
-    std::string documentSerialNumber;
-    std::string issuingDate;
-    std::string expiryDate;
-    std::string issuingAuthority;
-    std::string chipSerialNumber;
-};
-
-struct FixedPersonalData
-{
-    std::string personalNumber;
-    std::string surname;
-    std::string givenName;
-    std::string parentGivenName;
-    std::string sex;
-    std::string placeOfBirth;
-    std::string communityOfBirth;
-    std::string stateOfBirth;
-    std::string dateOfBirth;
-    std::string nationalityFull;
-    std::string statusOfForeigner;
-};
-
-struct VariablePersonalData
-{
-    std::string state;
-    std::string community;
-    std::string place;
-    std::string street;
-    std::string houseNumber;
-    std::string houseLetter;
-    std::string entrance;
-    std::string floor;
-    std::string apartmentNumber;
-    std::string addressDate;
-    std::string addressLabel;
-};
-
 using PhotoData = std::vector<std::uint8_t>;
 
 } // namespace LibreSCRS::RsEId::Core

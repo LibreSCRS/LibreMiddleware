@@ -20,6 +20,10 @@
 #include <rs_tags.h>
 
 #include <algorithm>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -105,6 +109,32 @@ std::vector<std::uint8_t> le(std::uint16_t v)
     return {static_cast<std::uint8_t>(v & 0xFF), static_cast<std::uint8_t>(v >> 8)};
 }
 
+/// A signed-object file @p sodFid (outer container, inner header, CMS) whose digests cover
+/// @p covered, in that order, as the card's files stand now.
+std::vector<std::uint8_t> signedObjectFile(FakeAnnexCard& card, std::uint16_t sodFid,
+                                           const std::vector<std::uint16_t>& covered)
+{
+    std::vector<std::uint8_t> content;
+    for (const auto fid : covered) {
+        const auto tlv = Core::leadingTlv(card.files[fid]);
+        const auto d = Core::sha256(*tlv);
+        content.insert(content.end(), d->begin(), d->end());
+    }
+    const auto signed_ = Fx::makeSignedObject(content);
+
+    // The signed object sits inside the same container, behind an inner header.
+    std::vector<std::uint8_t> inner{0x10, 0x08};
+    const auto lenBytes = le(static_cast<std::uint16_t>(signed_.cms.size()));
+    inner.insert(inner.end(), lenBytes.begin(), lenBytes.end());
+    inner.insert(inner.end(), signed_.cms.begin(), signed_.cms.end());
+
+    std::vector<std::uint8_t> sodFile = le(sodFid);
+    const auto outerLen = le(static_cast<std::uint16_t>(inner.size()));
+    sodFile.insert(sodFile.end(), outerLen.begin(), outerLen.end());
+    sodFile.insert(sodFile.end(), inner.begin(), inner.end());
+    return sodFile;
+}
+
 /// A well-formed annex: manifest, two data files, an id hash, and the fixed
 /// object that covers them in the order the manifest implies.
 /// @param docData contents of 0F02, so a test can vary it and still get a card
@@ -117,25 +147,7 @@ FakeAnnexCard goodCard(std::vector<std::pair<std::uint16_t, std::string>> docDat
     card.files[0x0F03] = Fx::makeContainer(0x0F03, {{1561, "PARENT"}}, 822);
     card.files[0x0FA1] = Fx::makeContainer(0x0FA1, {{554, "0123456789ABCDEF"}}, 26);
 
-    std::vector<std::uint8_t> content;
-    for (const auto fid : {0x0F1B, 0x0F02, 0x0F03, 0x0FA1}) {
-        const auto tlv = Core::leadingTlv(card.files[static_cast<std::uint16_t>(fid)]);
-        const auto d = Core::sha256(*tlv);
-        content.insert(content.end(), d->begin(), d->end());
-    }
-    const auto signed_ = Fx::makeSignedObject(content);
-
-    // The signed object sits inside the same container, behind an inner header.
-    std::vector<std::uint8_t> inner{0x10, 0x08};
-    const auto lenBytes = le(static_cast<std::uint16_t>(signed_.cms.size()));
-    inner.insert(inner.end(), lenBytes.begin(), lenBytes.end());
-    inner.insert(inner.end(), signed_.cms.begin(), signed_.cms.end());
-
-    std::vector<std::uint8_t> sodFile = le(0x0F1C);
-    const auto outerLen = le(static_cast<std::uint16_t>(inner.size()));
-    sodFile.insert(sodFile.end(), outerLen.begin(), outerLen.end());
-    sodFile.insert(sodFile.end(), inner.begin(), inner.end());
-    card.files[0x0F1C] = sodFile;
+    card.files[0x0F1C] = signedObjectFile(card, 0x0F1C, {0x0F1B, 0x0F02, 0x0F03, 0x0FA1});
     return card;
 }
 
@@ -246,7 +258,7 @@ TEST(RsAnnexReader, RejectsFileWhoseOuterTagDoesNotMatchItsFileId)
     EXPECT_TRUE(readWith(card, annexEntry()).empty());
 }
 
-// Item 140 through the reader: a covered file swapped after signing. Nothing is
+// Tampering through the reader: a covered file swapped after signing. Nothing is
 // published -- personal details that cannot be attributed are withheld, not
 // shown with a warning beside them.
 TEST(RsAnnexReader, SubstitutedCoveredFileYieldsNoGroups)
@@ -264,7 +276,7 @@ TEST(RsAnnexReader, MissingSignedObjectYieldsNoGroups)
     EXPECT_TRUE(readWith(card, annexEntry()).empty());
 }
 
-// D5: tags whose meaning is unconfirmed carry filler on the test card, and a
+// Tags whose meaning is unconfirmed carry filler on the test card, and a
 // wrongly named personal field is worse than an absent one.
 TEST(RsAnnexReader, DoesNotPublishTagsOfUnconfirmedMeaning)
 {
@@ -278,6 +290,173 @@ TEST(RsAnnexReader, DoesNotPublishTagsOfUnconfirmedMeaning)
         EXPECT_NE(textOf(f), "SC");
         EXPECT_NE(textOf(f), "X11111111X");
     }
+}
+
+// --- characterization: today's output, frozen before the rewrite ---
+
+namespace {
+
+struct FrozenField
+{
+    const char* key;
+    const char* label;
+    const char* value;
+};
+
+struct FrozenGroup
+{
+    const char* groupKey;
+    const char* groupLabel;
+    std::vector<FrozenField> fields;
+};
+
+// Every tag the reader names, plus the ones it deliberately leaves out and the
+// ones a newer card adds, spread over the data files as the card has them.
+FakeAnnexCard fullCard()
+{
+    FakeAnnexCard card;
+    card.files[0x0F1B] = Fx::makeManifest({0x0F02, 0x0F03, 0x0F04, 0x0FA1, 0x0F1C, 0x0F1D}, 150);
+    card.files[0x0F02] = Fx::makeContainer(0x0F02,
+                                           {{1548, "ID400000099"},
+                                            {1552, "SC"},
+                                            {1553, "SC"},
+                                            {1557, "917d20b304b647"},
+                                            {1681, "LS00036515"},
+                                            {1682, "DOZVOLA ZA PRIVREMENI BORAVAK I RAD"}},
+                                           157);
+    card.files[0x0F03] = Fx::makeContainer(0x0F03,
+                                           {{1561, "JOVAN"},
+                                            {1564, "SAVSKI VENAC"},
+                                            {1565, "REPUBLIKA SRBIJA"},
+                                            {1567, "SRB"},
+                                            {1576, "AAAAAAAA"},
+                                            {1577, "BBBBBBBB"},
+                                            {1683, "KRETANJE U OKVIRU PRIVREDNOG DRUŠTVA"},
+                                            {1684, "JEDINSTVENA DOZVOLA"}},
+                                           822);
+    card.files[0x0F04] = Fx::makeContainer(0x0F04,
+                                           {{1568, "SRBIJA"},
+                                            {1569, "NOVI BEOGRAD"},
+                                            {1570, "BEOGRAD"},
+                                            {1571, "UTOPIJA"},
+                                            {1572, "BB"},
+                                            {1573, "A"},
+                                            {1574, "2"},
+                                            {1575, "1"},
+                                            {1578, "8"},
+                                            {1580, "06082016"},
+                                            {1581, "PREBIVALIŠTE"}},
+                                           886);
+    card.files[0x0FA1] = Fx::makeContainer(0x0FA1, {{554, "0123456789ABCDEF"}}, 26);
+    card.files[0x0F1C] = signedObjectFile(card, 0x0F1C, {0x0F1B, 0x0F02, 0x0F03, 0x0FA1});
+    card.files[0x0F1D] = signedObjectFile(card, 0x0F1D, {0x0F04});
+    return card;
+}
+
+std::string canonicalLines(const std::vector<LibreSCRS::Plugin::CardFieldGroup>& groups)
+{
+    std::string out;
+    for (const auto& g : groups) {
+        for (const auto& f : g.fields) {
+            out += g.groupKey + '\t' + f.key + '\t' + f.label + '\t' + textOf(f) + '\n';
+        }
+    }
+    return out;
+}
+
+std::vector<std::uint8_t> slurp(const std::filesystem::path& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+} // namespace
+
+// The whole output, literally: group order, labels, field order, types. Expected
+// values were checked by hand against the annex rows of the profile, file by file -- fields come
+// out in table order, not card order, and the unnamed tags stay out.
+TEST(RsAnnexReaderCharacterization, SyntheticCardOutputIsFrozen)
+{
+    auto card = fullCard();
+    const auto groups = readWith(card, annexEntry());
+
+    const std::vector<FrozenGroup> expected{
+        {"annex.rs.personal",
+         "Additional Data",
+         {
+             {"document_serial", "Document Number", "ID400000099"},
+             {"parent_given_name", "Parent Given Name", "JOVAN"},
+             {"community_of_birth", "Community of Birth", "SAVSKI VENAC"},
+             {"state_of_birth", "State of Birth", "REPUBLIKA SRBIJA"},
+             {"state", "State", "SRBIJA"},
+             {"community", "Community", "NOVI BEOGRAD"},
+             {"place", "Place", "BEOGRAD"},
+             {"street", "Street", "UTOPIJA"},
+             {"house_number", "House Number", "BB"},
+             {"house_letter", "House Letter", "A"},
+             {"entrance", "Entrance", "2"},
+             {"floor", "Floor", "1"},
+             {"apartment_number", "Apartment", "8"},
+             {"address_date", "Address Date", "06082016"},
+             {"address_label", "Address Label", "PREBIVALIŠTE"},
+         }},
+        {"annex.rs.security",
+         "Additional Data Verification",
+         {
+             {"annex_integrity", "Data Integrity", "PASSED"},
+             {"annex_authenticity", "Data Authenticity", "NOT_PERFORMED"},
+         }},
+    };
+
+    ASSERT_EQ(groups.size(), expected.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        EXPECT_EQ(groups[i].groupKey, expected[i].groupKey);
+        EXPECT_EQ(groups[i].groupLabel, expected[i].groupLabel);
+        ASSERT_EQ(groups[i].fields.size(), expected[i].fields.size()) << expected[i].groupKey;
+        for (std::size_t j = 0; j < expected[i].fields.size(); ++j) {
+            const auto& got = groups[i].fields[j];
+            EXPECT_EQ(got.key, expected[i].fields[j].key) << expected[i].groupKey << " #" << j;
+            EXPECT_EQ(got.label, expected[i].fields[j].label) << expected[i].groupKey << " #" << j;
+            EXPECT_EQ(got.type, LibreSCRS::Plugin::FieldType::Text) << expected[i].groupKey << " #" << j;
+            EXPECT_EQ(textOf(got), expected[i].fields[j].value) << expected[i].groupKey << " #" << j;
+        }
+    }
+}
+
+// A dual-interface card read from a dump supplied through the environment: its
+// bytes never enter this repository, and neither does the oracle it is compared with.
+TEST(RsAnnexReaderCharacterization, ScannedDualInterfaceCardMatchesOracle)
+{
+    const char* dir = std::getenv("LIBRESCRS_RS_EID_DUAL_DIR");
+    const char* oracleDir = std::getenv("LIBRESCRS_RS_EID_ORACLE_DIR");
+    if (dir == nullptr || oracleDir == nullptr) {
+        GTEST_SKIP() << "LIBRESCRS_RS_EID_DUAL_DIR and LIBRESCRS_RS_EID_ORACLE_DIR are not set";
+    }
+
+    FakeAnnexCard card;
+    const std::pair<std::uint16_t, const char*> dumps[]{
+        {0x0F1B, "od_0F1B_portrait_hdr.bin"}, {0x0F02, "od_0F02_doc.bin"},  {0x0F03, "od_0F03_person.bin"},
+        {0x0F04, "od_0F04_residence.bin"},    {0x0FA1, "od_0FA1_misc.bin"}, {0x0F1C, "od_0F1C_sod_fx.bin"},
+        {0x0F1D, "od_0F1D_sod_vx.bin"},
+    };
+    for (const auto& [fid, name] : dumps) {
+        card.files[fid] = slurp(std::filesystem::path(dir) / name);
+        ASSERT_FALSE(card.files[fid].empty()) << name;
+    }
+
+    const auto actual = canonicalLines(readWith(card, annexEntry()));
+    const auto oracle = std::filesystem::path(oracleDir) / "dual-lk-annex.txt";
+
+    if (const char* write = std::getenv("LIBRESCRS_RS_EID_ORACLE_WRITE");
+        write != nullptr && std::string{write} == "1") {
+        std::ofstream(oracle, std::ios::binary) << actual;
+        GTEST_SKIP() << "oracle written to " << oracle;
+    }
+
+    std::ifstream in(oracle, std::ios::binary);
+    ASSERT_TRUE(in) << "missing oracle " << oracle;
+    const std::string expected{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    EXPECT_EQ(actual, expected);
 }
 
 // --- dispatch ---

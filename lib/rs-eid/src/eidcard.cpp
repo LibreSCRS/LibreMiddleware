@@ -2,118 +2,68 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "eidcard.h"
-#include "card_protocol.h"
-#include "card_reader_base.h"
 #include "card_reader_gemalto.h"
 #include "card_verifier.h"
 #include <apdu.h>
 #include <smartcard/card_connection.h>
 #include <smartcard/or_throw.h>
-#include "date_format.h"
-#include "tlv.h"
+
+#include <LibreSCRS/Logging.h>
+
+#include <algorithm>
+#include <stdexcept>
 
 namespace eidcard {
 
-using LibreSCRS::SmartCard::Internal::formatDateDMY;
-
-// Init logic for the constructor
-void EIdCard::detectCardType()
-{
-    auto atr = LibreSCRS::SmartCard::Internal::orThrow(conn->getATR());
-
-    if (protocol::isGemaltoATR(atr)) {
-        cardType = CardReaderGemalto::selectApplication(*conn);
-        cardReader = std::make_unique<CardReaderGemalto>();
-    } else {
-        cardType = CardReaderGemalto::selectApplication(*conn);
-        if (cardType != CardType::Unknown) {
-            cardReader = std::make_unique<CardReaderGemalto>();
-        } else {
-            throw std::runtime_error("Unknown card type, ATR not recognized");
-        }
-    }
-}
+namespace Core = LibreSCRS::RsEId::Core;
 
 EIdCard::EIdCard(LibreSCRS::SmartCard::CardConnection& externalConn) : conn(&externalConn)
 {
-    detectCardType();
+    selected = CardReaderGemalto::selectApplication(*conn);
+    if (!selected)
+        throw std::runtime_error("Unknown card type: no Serbian eID application selected");
 }
 
 EIdCard::~EIdCard() = default;
 
-CardType EIdCard::getCardType() const
+const Core::DocumentProfile& EIdCard::profile() const
 {
-    return cardType;
+    return *selected;
 }
 
-DocumentData EIdCard::readDocumentData()
+const Core::RawFiles& EIdCard::load(std::span<const std::uint16_t> fids)
 {
+    std::vector<std::uint16_t> todo;
+    for (const auto fid : fids) {
+        if (!tried.contains(fid))
+            todo.push_back(fid);
+    }
+    if (todo.empty())
+        return files;
+
     auto tx = LibreSCRS::SmartCard::Internal::orThrow(LibreSCRS::SmartCard::Internal::CardTransaction::begin(*conn));
-    auto raw = cardReader->readFile(*conn, protocol::FILE_DOCUMENT_DATA_H, protocol::FILE_DOCUMENT_DATA_L);
-    auto fields = LibreSCRS::SmartCard::Internal::parseTLV(raw.data(), raw.size());
-
-    DocumentData doc;
-    doc.docRegNo = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_DOC_REG_NO);
-    doc.documentType = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_DOCUMENT_TYPE);
-    doc.documentSerialNumber = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_DOCUMENT_SERIAL_NO);
-    doc.issuingDate = formatDateDMY(LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ISSUING_DATE));
-    doc.expiryDate = formatDateDMY(LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_EXPIRY_DATE));
-    doc.issuingAuthority = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ISSUING_AUTHORITY);
-    doc.chipSerialNumber = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_CHIP_SERIAL_NUMBER);
-    return doc;
-}
-
-FixedPersonalData EIdCard::readFixedPersonalData()
-{
-    auto tx = LibreSCRS::SmartCard::Internal::orThrow(LibreSCRS::SmartCard::Internal::CardTransaction::begin(*conn));
-    auto raw = cardReader->readFile(*conn, protocol::FILE_PERSONAL_DATA_H, protocol::FILE_PERSONAL_DATA_L);
-    auto fields = LibreSCRS::SmartCard::Internal::parseTLV(raw.data(), raw.size());
-
-    FixedPersonalData fpd;
-    fpd.personalNumber = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_PERSONAL_NUMBER);
-    fpd.surname = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_SURNAME);
-    fpd.givenName = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_GIVEN_NAME);
-    fpd.parentGivenName = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_PARENT_GIVEN_NAME);
-    fpd.sex = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_SEX);
-    fpd.placeOfBirth = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_PLACE_OF_BIRTH);
-    fpd.communityOfBirth = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_COMMUNITY_OF_BIRTH);
-    fpd.stateOfBirth = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_STATE_OF_BIRTH);
-    fpd.dateOfBirth = formatDateDMY(LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_DATE_OF_BIRTH));
-    fpd.nationalityFull = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_NATIONALITY_FULL);
-    fpd.statusOfForeigner = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_STATUS_OF_FOREIGNER);
-    return fpd;
-}
-
-VariablePersonalData EIdCard::readVariablePersonalData()
-{
-    auto tx = LibreSCRS::SmartCard::Internal::orThrow(LibreSCRS::SmartCard::Internal::CardTransaction::begin(*conn));
-    auto raw = cardReader->readFile(*conn, protocol::FILE_VARIABLE_DATA_H, protocol::FILE_VARIABLE_DATA_L);
-    auto fields = LibreSCRS::SmartCard::Internal::parseTLV(raw.data(), raw.size());
-
-    VariablePersonalData vpd;
-    vpd.state = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_STATE);
-    vpd.community = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_COMMUNITY);
-    vpd.place = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_PLACE);
-    vpd.street = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_STREET);
-    vpd.houseNumber = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_HOUSE_NUMBER);
-    vpd.houseLetter = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_HOUSE_LETTER);
-    vpd.entrance = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ENTRANCE);
-    vpd.floor = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_FLOOR);
-    vpd.apartmentNumber = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_APARTMENT_NUMBER);
-    vpd.addressDate = formatDateDMY(LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ADDRESS_DATE));
-    vpd.addressLabel = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ADDRESS_LABEL);
-    return vpd;
+    for (const auto fid : todo) {
+        const auto spec = std::ranges::find(selected->files, fid, &Core::FileSpec::fid);
+        if (spec == selected->files.end()) {
+            tried.insert(fid); // a file the profile does not know cannot be read as one
+            continue;
+        }
+        // Remembered only once the card has answered: a read that throws leaves
+        // the file untried, so a flaky link cannot pass for "the card refused".
+        auto bytes = CardReaderGemalto::readFile(*conn, *selected, *spec);
+        tried.insert(fid);
+        if (bytes)
+            files[fid] = std::move(*bytes);
+    }
+    return files;
 }
 
 PhotoData EIdCard::readPortrait()
 {
-    auto tx = LibreSCRS::SmartCard::Internal::orThrow(LibreSCRS::SmartCard::Internal::CardTransaction::begin(*conn));
-    auto raw = cardReader->readFile(*conn, protocol::FILE_PORTRAIT_H, protocol::FILE_PORTRAIT_L);
-    // Photo file data has a 4-byte TLV header (tag + length); trim it
-    if (raw.size() > 4) {
-        return PhotoData(raw.begin() + 4, raw.end());
-    }
-    return {};
+    const std::uint16_t fid = selected->photoFid;
+    const auto& read = load(std::span<const std::uint16_t>(&fid, 1));
+    const auto file = read.find(fid);
+    return file == read.end() ? PhotoData{} : Core::extractPhoto(file->second);
 }
 
 void EIdCard::addTrustedCertificate(const std::vector<uint8_t>& derCert)
@@ -123,25 +73,37 @@ void EIdCard::addTrustedCertificate(const std::vector<uint8_t>& derCert)
     verifier->addCertificate(derCert);
 }
 
-VerificationResult EIdCard::verifyCard()
+// Read what a verdict needs, then judge it. A read that fails for good leaves
+// the verdict unknown rather than the whole card unreadable.
+template <typename Verdict>
+VerificationResult EIdCard::verdict(std::vector<std::uint16_t> fids, Verdict&& judge)
 {
     if (!verifier)
         return VerificationResult::Unknown;
-    return verifier->verifyCard(*conn, *cardReader, cardType);
+    try {
+        return judge(load(fids));
+    } catch (const std::exception& e) {
+        LibreSCRS::log::tracef(LibreSCRS::log::TraceChannel::Sign, "[EIdCard] verification read failed: {}", e.what());
+        return VerificationResult::Unknown;
+    }
+}
+
+VerificationResult EIdCard::verifyCard()
+{
+    return verdict({selected->cardCertSodFid},
+                   [&](const Core::RawFiles& f) { return verifier->verifyCard(*selected, f); });
 }
 
 VerificationResult EIdCard::verifyFixedData()
 {
-    if (!verifier)
-        return VerificationResult::Unknown;
-    return verifier->verifyFixedData(*conn, *cardReader, cardType);
+    return verdict(CardVerifier::filesFor(*selected, Core::SodRole::Fixed),
+                   [&](const Core::RawFiles& f) { return verifier->verifyFixedData(*selected, f); });
 }
 
 VerificationResult EIdCard::verifyVariableData()
 {
-    if (!verifier)
-        return VerificationResult::Unknown;
-    return verifier->verifyVariableData(*conn, *cardReader, cardType);
+    return verdict(CardVerifier::filesFor(*selected, Core::SodRole::Variable),
+                   [&](const Core::RawFiles& f) { return verifier->verifyVariableData(*selected, f); });
 }
 
 } // namespace eidcard

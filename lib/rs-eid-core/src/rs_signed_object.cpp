@@ -53,8 +53,8 @@ using LibreSCRS::Internal::Crypto::X509StoreCtxPtr;
 
 } // namespace
 
-SignedObjectReport verifySignedObject(std::span<const std::uint8_t> cmsDer, std::span<const BlockCandidates> blocks,
-                                      DigestBinding binding, const TrustStore& trust)
+SignedObjectReport verifySignedObject(std::span<const std::uint8_t> cmsDer, std::span<const SlotInput> slots,
+                                      const TrustStore& trust)
 {
     SignedObjectReport report;
     if (cmsDer.empty()) {
@@ -86,7 +86,7 @@ SignedObjectReport verifySignedObject(std::span<const std::uint8_t> cmsDer, std:
                        reinterpret_cast<const std::uint8_t*>(bptr->data) + bptr->length);
     }
     report.slotCount = content.size() / kDigestSize;
-    report.digestsBound = matchDigests(content, blocks, binding);
+    report.digestsBound = matchDigests(content, slots);
 
     // A genuine card Security Object carries exactly one signer. Pinning only
     // the first of several would leave the rest unexamined.

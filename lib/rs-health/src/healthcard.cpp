@@ -8,33 +8,14 @@
 #include <smartcard/chunked_read.h>
 #include <smartcard/or_throw.h>
 #include "date_format.h"
+#include "text_encoding.h"
 #include "tlv.h"
 #include <stdexcept>
 
 namespace healthcard {
 
+using LibreSCRS::SmartCard::Internal::decodeUtf16Le;
 using LibreSCRS::SmartCard::Internal::formatDateDMY;
-
-// Decode UTF-16 LE bytes → UTF-8 string (BMP only, covers all Serbian script)
-static std::string decodeUtf16Le(const std::vector<uint8_t>& bytes)
-{
-    std::string out;
-    out.reserve(bytes.size());
-    for (size_t i = 0; i + 1 < bytes.size(); i += 2) {
-        uint16_t cp = static_cast<uint16_t>(bytes[i]) | (static_cast<uint16_t>(bytes[i + 1]) << 8);
-        if (cp < 0x80) {
-            out += static_cast<char>(cp);
-        } else if (cp < 0x800) {
-            out += static_cast<char>(0xC0 | (cp >> 6));
-            out += static_cast<char>(0x80 | (cp & 0x3F));
-        } else {
-            out += static_cast<char>(0xE0 | (cp >> 12));
-            out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-            out += static_cast<char>(0x80 | (cp & 0x3F));
-        }
-    }
-    return out;
-}
 
 // Find a TLV field value and decode it as a UTF-16 LE string
 static std::string findUtf16String(const std::vector<LibreSCRS::SmartCard::Internal::TLVField>& fields, uint16_t tag)

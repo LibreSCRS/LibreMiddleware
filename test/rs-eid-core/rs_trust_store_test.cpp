@@ -75,7 +75,7 @@ TEST(RsTrustStore, ByteWiseAnchorStillHonoursValidityWindow)
     trust.addCertificate(fixture.signerCertDer);
     ASSERT_EQ(anchorCount(trust), 1);
 
-    const auto report = verifySignedObject(fixture.cms, {}, DigestBinding::Positional, trust);
+    const auto report = verifySignedObject(fixture.cms, std::span<const SlotInput>{}, trust);
     EXPECT_EQ(report.signer, VerificationResult::Invalid);
 }
 
@@ -89,7 +89,7 @@ TEST(RsTrustStore, FolderAnchorIgnoresValidityWindow)
     ASSERT_EQ(anchorCount(trust), 1);
 
     // Chain builds despite the closed window; the signer is simply not ours.
-    const auto report = verifySignedObject(fixture.cms, {}, DigestBinding::Positional, trust);
+    const auto report = verifySignedObject(fixture.cms, std::span<const SlotInput>{}, trust);
     EXPECT_EQ(report.signer, VerificationResult::Unknown);
 }
 

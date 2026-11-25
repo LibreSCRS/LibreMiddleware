@@ -6,7 +6,7 @@ ASiCModuleTests 40
 ActivatedProtocolTests 3
 ActivationFallbackPolicyTests 3
 ActivationProfileTests 3
-AnnexTests 26
+AnnexTests 28
 AtrMatchingTests 8
 CAdESModuleTests 10
 CancellationNviTests 4
@@ -33,7 +33,7 @@ EmrtdCardReadTests 9
 HttpClientTests 3
 JAdESModuleTests 12
 JcsTests 12
-LibreMiddlewareTests 68
+LibreMiddlewareTests 71
 LibreSCRS_AetAttestationTests 3
 LibreSCRS_AuthRequirementPaceTests 7
 LibreSCRS_AuthTests 8
@@ -100,9 +100,9 @@ PreReadAuthDerivationTests 5
 ProbeOrderTests 3
 ReadLengthPolicyTests 26
 RevocationClientTests 19
-RsEidCoreTests 48
-RsEidDriverTests 30
-RsEidPluginTests 1
+RsEidCoreTests 70
+RsEidDriverTests 43
+RsEidPluginTests 13
 SecretParameterConceptTests 1
 SecretWipeOnFreeTests 12
 SecureWipeTests 2
@@ -130,7 +130,7 @@ apdu_select_p2_test 2
 bundled_certs_bundle_contents_test 1
 bundled_certs_install_layout_test 1
 bundled_certs_walker_test 1
-card_mapper_tests 57
+card_mapper_tests 58
 cardsession_reentrancy_test 5
 csca_master_list_public_api_test 13
 librescrs-example-shared-cli 1

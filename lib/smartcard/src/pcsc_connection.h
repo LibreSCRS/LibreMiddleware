@@ -121,9 +121,8 @@ public:
     // SCardStatus() directly — a lower-level primitive than transmit(), so it
     // is never touched by the TransmitFilter installed via setTransmitFilter().
     // A detached connection has no handle for SCardStatus() to
-    // query, so a caller that identifies the card type from its ATR (e.g.
-    // eidcard::EIdCard::detectCardType()) has no other way to be handed a
-    // synthetic ATR. Mirrors the transmitRaw seam below (detached() &&
+    // query, so a caller that identifies the card from its ATR has no other
+    // way to be handed a synthetic ATR. Mirrors the transmitRaw seam below (detached() &&
     // detachedRawResponder): getATR() only returns this override when
     // detached() AND a non-empty ATR was installed here. A production
     // connection's getATR() path is untouched; a detached connection with

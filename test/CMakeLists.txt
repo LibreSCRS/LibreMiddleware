@@ -97,11 +97,13 @@ target_link_libraries(RsEidDriverTests
     GTest::gtest_main
     LibreSCRS_SmartCard_RawDiagnostic
     RsEId
+    RsEIdCore
     SmartCard_Impl
     OpenSSL_Crypto
     LibreSCRS_SmartCard_TestHelpers
 )
 target_include_directories(RsEidDriverTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid-core/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
@@ -118,6 +120,7 @@ gtest_discover_tests(RsEidDriverTests)
 add_executable(RsEidCoreTests
     rs-eid-core/rs_container_test.cpp
     rs-eid-core/rs_digest_binding_test.cpp
+    rs-eid-core/rs_document_profile_test.cpp
     rs-eid-core/document_signer_policy_test.cpp
     rs-eid-core/rs_signed_object_test.cpp
     rs-eid-core/rs_trust_store_test.cpp
@@ -130,6 +133,7 @@ target_link_libraries(RsEidCoreTests
     OpenSSL_Crypto
 )
 target_include_directories(RsEidCoreTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid-core/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include
@@ -144,6 +148,7 @@ gtest_discover_tests(RsEidCoreTests)
 # which exercises the CardReaderGemalto/CardVerifier drivers directly.
 add_executable(RsEidPluginTests
     rs-eid/eid_card_plugin_verification_test.cpp
+    rs-eid/eid_card_plugin_documents_test.cpp
 )
 # LibreSCRS_SmartCard_TestHelpers supplies PCSCConnection::setDetachedAtr:
 # the setter's definition lives in that build-tree-only archive so the
@@ -157,8 +162,12 @@ target_link_libraries(RsEidPluginTests
     LibreSCRS_SmartCard_TestHelpers
     # arms a seam of the session's connection: a test copy of the class
     LibreSCRS_SmartCard_RawDiagnostic
+    LibreSCRS_Trust
+    RsEIdCore
+    OpenSSL_Crypto
 )
 target_include_directories(RsEidPluginTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid-core/src

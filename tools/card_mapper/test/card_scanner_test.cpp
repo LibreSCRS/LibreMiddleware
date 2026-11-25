@@ -5,7 +5,7 @@
 
 #include <apdu.h>
 
-#include <card_protocol.h>
+#include <rs_document_profile.h>
 #include "../cardedge_protocol_constants.h"
 #include <health_protocol.h>
 #include <eu_vrc_protocol.h>
@@ -16,6 +16,20 @@
 #include <algorithm>
 
 using namespace card_mapper;
+
+namespace {
+
+// The AID of a document type, by its code (ID, IF, RP, EL).
+std::vector<uint8_t> eidAid(std::string_view code)
+{
+    for (const auto& p : LibreSCRS::RsEId::Core::documentProfiles()) {
+        if (p.code == code)
+            return {p.aid.begin(), p.aid.end()};
+    }
+    return {};
+}
+
+} // namespace
 
 TEST(CardScanner, ProbeRangesContainsExpected)
 {
@@ -45,13 +59,18 @@ TEST(CardScanner, AllKnownProbesIncludesAll)
 {
     auto probes = getAllKnownProbes();
 
-    // Should have: 3 eID + 1 CardEdge + 1 Health + 1 eMRTD + 1 PIV + 1 EU VRC + 3 Serbian = 11
-    EXPECT_EQ(probes.size(), 11u);
+    // Should have: 4 eID + 1 CardEdge + 1 Health + 1 eMRTD + 1 PIV + 1 EU VRC + 3 Serbian = 12
+    EXPECT_EQ(probes.size(), 12u);
 
     // Check eID SERID is present
-    auto hasSerid = std::any_of(probes.begin(), probes.end(),
-                                [](const AidProbe& p) { return p.canonicalAid == eidcard::protocol::AID_SERID; });
+    auto hasSerid =
+        std::any_of(probes.begin(), probes.end(), [](const AidProbe& p) { return p.canonicalAid == eidAid("ID"); });
     EXPECT_TRUE(hasSerid);
+
+    // The official ID is probed too, under the name its AID carries
+    auto serel = std::find_if(probes.begin(), probes.end(), [](const AidProbe& p) { return p.name == "SEREL"; });
+    ASSERT_NE(serel, probes.end());
+    EXPECT_EQ(serel->canonicalAid, eidAid("EL"));
 
     // Check CardEdge is present
     auto hasCardEdge = std::any_of(probes.begin(), probes.end(),
@@ -95,7 +114,7 @@ TEST(CardScanner, EuVrcSerbianProbesHaveThreeSelectCommands)
 TEST(CardScanner, MatchProfileEid)
 {
     std::vector<std::vector<uint8_t>> detected = {
-        eidcard::protocol::AID_SERID,
+        eidAid("ID"),
         cardedge::protocol::AID_PKCS15,
     };
     EXPECT_EQ(matchProfile(detected), "rs-eid-profile");
@@ -104,10 +123,16 @@ TEST(CardScanner, MatchProfileEid)
 TEST(CardScanner, MatchProfileEidForeigner)
 {
     std::vector<std::vector<uint8_t>> detected = {
-        eidcard::protocol::AID_SERIF,
+        eidAid("IF"),
         cardedge::protocol::AID_PKCS15,
     };
     EXPECT_EQ(matchProfile(detected), "rs-eid-profile");
+}
+
+TEST(CardScanner, MatchProfileResidencePermitAndServiceId)
+{
+    EXPECT_EQ(matchProfile({eidAid("RP")}), "rs-eid-profile");
+    EXPECT_EQ(matchProfile({eidAid("EL")}), "rs-eid-profile");
 }
 
 TEST(CardScanner, MatchProfileHealth)

@@ -4,7 +4,7 @@
 #include "plugin_mapper.h"
 #include "apdu_logger.h"
 
-#include <card_protocol.h>
+#include <rs_document_profile.h>
 #include "cardedge_protocol_constants.h"
 #include <health_protocol.h>
 #include <eu_vrc_protocol.h>
@@ -14,7 +14,10 @@
 #include <smartcard/or_throw.h>
 #include <tlv.h>
 
+#include <algorithm>
 #include <cstdlib>
+#include <map>
+#include <string_view>
 #include <format>
 #include <iomanip>
 #include <iostream>
@@ -25,98 +28,152 @@ namespace card_mapper {
 
 namespace {
 
+// Names of the files as documentation calls them. The profile knows ids, modes and
+// fields; these are only the headings of the generated pages.
+const char* efName(std::string_view code, std::uint16_t fid)
+{
+    if (code == "EL") {
+        switch (fid) {
+        case 0x0D00:
+            return "EF.Manifest";
+        case 0x0D01:
+            return "EF.DocumentData";
+        case 0x0D02:
+            return "EF.PersonalData";
+        case 0x0D03:
+            return "EF.ServiceData";
+        case 0x0D04:
+            return "EF.SealedData";
+        case 0x0D05:
+            return "EF.Portrait";
+        case 0x0D07:
+            return "EF.Digest";
+        case 0x0D08:
+            return "EF.SOD_FX";
+        case 0x0D09:
+            return "EF.SOD_SERVICE";
+        case 0x0D0A:
+            return "EF.SOD_SEALED";
+        case 0x0D10:
+            return "EF.PublicKey";
+        default:
+            return "EF";
+        }
+    }
+    switch (fid) {
+    case 0x0F1B:
+        return "EF.Manifest";
+    case 0x0F02:
+        return "EF.DocumentData";
+    case 0x0F03:
+        return "EF.PersonalData";
+    case 0x0F04:
+        return "EF.VariableData";
+    case 0x0F06:
+        return "EF.Portrait";
+    case 0x0FA1:
+        return "EF.IdHash";
+    case 0x0FA2:
+        return "EF.IssuerHash";
+    case 0x0F12:
+        return "EF.CertDigests";
+    case 0x0D10:
+        return "EF.PublicKey";
+    case 0x0F1C:
+        return "EF.SOD_FX";
+    case 0x0F1D:
+        return "EF.SOD_VX";
+    default:
+        return "EF";
+    }
+}
+
+std::string aidName(const LibreSCRS::RsEId::Core::DocumentProfile& p)
+{
+    // The application name is in the AID itself: F3 81 00 00 02 'S' 'E' 'R' x y 01.
+    std::string name(p.aid.begin() + 5, p.aid.begin() + 10);
+    const char* what = p.code == "ID"   ? "identity card"
+                       : p.code == "IF" ? "identity card for foreigners"
+                       : p.code == "RP" ? "residence permit"
+                       : p.code == "EL" ? "official service ID"
+                                        : nullptr;
+    // A profile added without a name here is listed by its code, not mislabelled.
+    return name + " \xe2\x80\x94 " + (what ? std::string(what) : std::string(p.code));
+}
+
+std::string fileFormat(const LibreSCRS::RsEId::Core::DocumentProfile& p, const LibreSCRS::RsEId::Core::FileSpec& f)
+{
+    if (f.fid == p.photoFid)
+        return "TLV, JPEG inside";
+    for (const auto& sod : p.sods) {
+        if (sod.fid == f.fid)
+            return "PKCS#7 SignedData";
+    }
+    return f.mode == LibreSCRS::RsEId::Core::ReadMode::Allocation ? "binary (whole allocation)" : "TLV";
+}
+
 AppletInfo buildEidInfo()
 {
-    using namespace eidcard::protocol;
+    namespace Core = LibreSCRS::RsEId::Core;
 
     AppletInfo info;
     info.name = "Serbian eID";
-    info.description = "Serbian electronic identity card (citizen and foreigner)";
-    info.aids = {AID_SERID, AID_SERIF, AID_SERRP};
-    info.aidNames = {"SERID \xe2\x80\x94 citizen", "SERIF \xe2\x80\x94 foreigner, IF2020",
-                     "SERRP \xe2\x80\x94 foreigner, alt"};
+    info.description =
+        "Serbian electronic identity documents (identity card, identity card for foreigners, residence permit, "
+        "official service ID)";
     info.authentication = "None required for read";
     info.pluginName = "eid";
 
-    // Build file tree
     FileNode mf;
     mf.name = "MF";
     mf.fidHi = 0x3F;
     mf.fidLo = 0x00;
     mf.isDir = true;
 
-    FileNode df;
-    df.name = "DF.SERID";
-    df.isDir = true;
+    // ID, IF and RP share one layout, so they share one directory and one set
+    // of data files; every other profile has its own.
+    const Core::DocumentProfile* shown = nullptr;
+    for (const auto& p : Core::documentProfiles()) {
+        info.aids.emplace_back(p.aid.begin(), p.aid.end());
+        info.aidNames.push_back(aidName(p));
+        if (shown && shown->files.data() == p.files.data())
+            continue;
+        shown = &p;
 
-    df.children.push_back({"EF.DocumentData", FILE_DOCUMENT_DATA_H, FILE_DOCUMENT_DATA_L, "TLV", "", "", false, {}});
-    df.children.push_back({"EF.PersonalData", FILE_PERSONAL_DATA_H, FILE_PERSONAL_DATA_L, "TLV", "", "", false, {}});
-    df.children.push_back({"EF.VariableData", FILE_VARIABLE_DATA_H, FILE_VARIABLE_DATA_L, "TLV", "", "", false, {}});
-    df.children.push_back({"EF.Portrait", FILE_PORTRAIT_H, FILE_PORTRAIT_L, "binary JPEG", "~15KB", "", false, {}});
-    df.children.push_back(
-        {"EF.SOD_FX", FILE_SOD_FX_H, FILE_SOD_FX_L, "PKCS#7 SignedData", "", "[Gemalto/IF2020]", false, {}});
-    df.children.push_back(
-        {"EF.SOD_VX", FILE_SOD_VX_H, FILE_SOD_VX_L, "PKCS#7 SignedData", "", "[Gemalto/IF2020]", false, {}});
+        FileNode df;
+        df.name = "DF." + std::string(p.aid.begin() + 5, p.aid.begin() + 10);
+        df.isDir = true;
+        for (const auto& f : p.files) {
+            df.children.push_back({efName(p.code, f.fid),
+                                   static_cast<uint8_t>(f.fid >> 8),
+                                   static_cast<uint8_t>(f.fid & 0xFF),
+                                   fileFormat(p, f),
+                                   "",
+                                   "",
+                                   false,
+                                   {}});
+        }
+        mf.children.push_back(std::move(df));
 
-    mf.children.push_back(df);
+        // Data files: those that carry CardEdge fields, rows in profile order.
+        std::map<std::uint16_t, DataFile> byFid;
+        for (const auto& f : p.fields) {
+            if ((f.surfaces & static_cast<std::uint8_t>(Core::Surface::CardEdge)) == 0)
+                continue;
+            auto& file = byFid[f.fid];
+            file.name = efName(p.code, f.fid);
+            file.fidHi = static_cast<uint8_t>(f.fid >> 8);
+            file.fidLo = static_cast<uint8_t>(f.fid & 0xFF);
+            file.tags.push_back({f.tag, std::string(f.key), std::string(f.label),
+                                 f.format == Core::FieldFormat::Date ? "string (DD.MM.YYYY)" : "string", ""});
+        }
+        for (auto& [fid, file] : byFid)
+            info.dataFiles.push_back(std::move(file));
+    }
     info.rootNode = mf;
 
-    // Data files with TLV tags
-    DataFile docData;
-    docData.name = "EF.DocumentData";
-    docData.fidHi = FILE_DOCUMENT_DATA_H;
-    docData.fidLo = FILE_DOCUMENT_DATA_L;
-    docData.tags = {
-        {TAG_DOC_REG_NO, "doc_reg_no", "Registration number", "string", ""},
-        {TAG_DOCUMENT_TYPE, "document_type", "Document type", "string", ""},
-        {TAG_DOCUMENT_SERIAL_NO, "document_serial_number", "Serial number", "string", ""},
-        {TAG_ISSUING_DATE, "issuing_date", "Date of issue", "string (DD.MM.YYYY)", ""},
-        {TAG_EXPIRY_DATE, "expiry_date", "Expiry date", "string (DD.MM.YYYY)", ""},
-        {TAG_ISSUING_AUTHORITY, "issuing_authority", "Issuing authority", "string", ""},
-        {TAG_CHIP_SERIAL_NUMBER, "chip_serial_number", "Chip serial number", "string", ""},
-    };
-    info.dataFiles.push_back(docData);
-
-    DataFile personalData;
-    personalData.name = "EF.PersonalData";
-    personalData.fidHi = FILE_PERSONAL_DATA_H;
-    personalData.fidLo = FILE_PERSONAL_DATA_L;
-    personalData.tags = {
-        {TAG_PERSONAL_NUMBER, "personal_number", "JMBG (personal ID number)", "string (13 digits)", ""},
-        {TAG_SURNAME, "surname", "Surname", "string (Cyrillic)", ""},
-        {TAG_GIVEN_NAME, "given_name", "Given name", "string (Cyrillic)", ""},
-        {TAG_PARENT_GIVEN_NAME, "parent_given_name", "Parent's given name", "string (Cyrillic)", ""},
-        {TAG_SEX, "sex", "Sex", "string (M/F)", ""},
-        {TAG_PLACE_OF_BIRTH, "place_of_birth", "Place of birth", "string", ""},
-        {TAG_COMMUNITY_OF_BIRTH, "community_of_birth", "Community of birth", "string", ""},
-        {TAG_STATE_OF_BIRTH, "state_of_birth", "State of birth", "string", ""},
-        {TAG_DATE_OF_BIRTH, "date_of_birth", "Date of birth", "string (DD.MM.YYYY)", ""},
-        {TAG_NATIONALITY_FULL, "nationality", "Nationality", "string", ""},
-        {TAG_STATUS_OF_FOREIGNER, "status_of_foreigner", "Foreigner status", "string", ""},
-    };
-    info.dataFiles.push_back(personalData);
-
-    DataFile variableData;
-    variableData.name = "EF.VariableData";
-    variableData.fidHi = FILE_VARIABLE_DATA_H;
-    variableData.fidLo = FILE_VARIABLE_DATA_L;
-    variableData.tags = {
-        {TAG_STATE, "state", "State of residence", "string", ""},
-        {TAG_COMMUNITY, "community", "Community", "string", ""},
-        {TAG_PLACE, "place", "Place", "string", ""},
-        {TAG_STREET, "street", "Street", "string", ""},
-        {TAG_HOUSE_NUMBER, "house_number", "House number", "string", ""},
-        {TAG_HOUSE_LETTER, "house_letter", "House letter", "string", ""},
-        {TAG_ENTRANCE, "entrance", "Entrance", "string", ""},
-        {TAG_FLOOR, "floor", "Floor", "string", ""},
-        {TAG_APARTMENT_NUMBER, "apartment_number", "Apartment number", "string", ""},
-        {TAG_ADDRESS_DATE, "address_date", "Address registration date", "string", ""},
-        {TAG_ADDRESS_LABEL, "address_label", "Address label", "string", ""},
-    };
-    info.dataFiles.push_back(variableData);
-
     info.readProcedure = {
-        "SELECT by AID: `00 A4 04 00 0B F3 81 00 00 02 53 45 52 49 44 01`",
+        "SELECT by AID, in order SERID, SERIF, SERRP, SEREL: `00 A4 04 00 0B F3 81 00 00 02 53 45 52 <x> <y> 01`",
         "SELECT EF by path: `00 A4 08 00 02 <FID_H> <FID_L> 04`",
         "READ BINARY in 255-byte chunks: `00 B0 <offsetHi> <offsetLo> FF`",
         "Parse response as LE 16-bit TLV",
@@ -568,6 +625,27 @@ AppletInfo mapPlugin(const std::string& pluginName, LibreSCRS::SmartCard::Intern
 
         if (!selected) {
             std::cerr << "Warning: all EU VRC AID sequences failed\n";
+        }
+    } else if (pluginName == "eid") {
+        // The card hosts one of the document types: select the first it accepts
+        // and read only that type's files.
+        namespace Core = LibreSCRS::RsEId::Core;
+        const Core::DocumentProfile* selected = nullptr;
+        for (const auto& p : Core::documentProfiles()) {
+            if (LibreSCRS::SmartCard::Internal::orThrow(
+                    conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID({p.aid.begin(), p.aid.end()})))
+                    .isSuccess()) {
+                selected = &p;
+                break;
+            }
+        }
+        if (!selected) {
+            std::cerr << "Warning: no Serbian eID application could be selected\n";
+        } else {
+            std::erase_if(info.dataFiles, [&](const DataFile& df) {
+                const auto fid = static_cast<std::uint16_t>((df.fidHi << 8) | df.fidLo);
+                return std::ranges::none_of(selected->files, [&](const Core::FileSpec& f) { return f.fid == fid; });
+            });
         }
     } else if (!info.aids.empty()) {
         auto selectCmd = LibreSCRS::SmartCard::Internal::selectByAID(info.aids[0]);

@@ -12,17 +12,24 @@ TEST(PluginMapper, EidPluginInfo)
     auto info = getPluginInfo("eid");
     EXPECT_EQ(info.name, "Serbian eID");
     EXPECT_EQ(info.pluginName, "eid");
-    EXPECT_EQ(info.aids.size(), 3u);     // SERID, SERIF, SERRP
+    EXPECT_EQ(info.aids.size(), 4u);     // SERID, SERIF, SERRP, SEREL
     EXPECT_EQ(info.aids[0].size(), 11u); // AID length
+    EXPECT_EQ(info.aidNames.size(), 4u);
     EXPECT_FALSE(info.dataFiles.empty());
-    // Should have 3 data files: DocumentData, PersonalData, VariableData
-    EXPECT_EQ(info.dataFiles.size(), 3u);
-    // DocumentData should have 7 tags
-    EXPECT_EQ(info.dataFiles[0].tags.size(), 7u);
-    // PersonalData should have 11 tags
-    EXPECT_EQ(info.dataFiles[1].tags.size(), 11u);
-    // VariableData should have 11 tags
-    EXPECT_EQ(info.dataFiles[2].tags.size(), 11u);
+    // Six data files, three per layout (ID/IF/RP share one): DocumentData,
+    // PersonalData, VariableData; then the official ID's document, personal and
+    // service data.
+    ASSERT_EQ(info.dataFiles.size(), 6u);
+    // DocumentData should have 8 tags
+    EXPECT_EQ(info.dataFiles[0].tags.size(), 8u);
+    // PersonalData should have 14 tags
+    EXPECT_EQ(info.dataFiles[1].tags.size(), 14u);
+    // VariableData should have 10 tags
+    EXPECT_EQ(info.dataFiles[2].tags.size(), 10u);
+    // The official ID's files: 3, 9 and 3 tags
+    EXPECT_EQ(info.dataFiles[3].tags.size(), 3u);
+    EXPECT_EQ(info.dataFiles[4].tags.size(), 9u);
+    EXPECT_EQ(info.dataFiles[5].tags.size(), 3u);
 }
 
 TEST(PluginMapper, CardEdgePluginInfo)
@@ -72,8 +79,9 @@ TEST(PluginMapper, EidRootNodeHasChildren)
     EXPECT_EQ(info.rootNode.name, "MF");
     EXPECT_TRUE(info.rootNode.isDir);
     EXPECT_FALSE(info.rootNode.children.empty());
-    // MF has one child DF
-    EXPECT_EQ(info.rootNode.children.size(), 1u);
-    // DF has 6 children (data files)
-    EXPECT_EQ(info.rootNode.children[0].children.size(), 6u);
+    // MF has two child DFs: the layout ID, IF and RP share, and the official ID's
+    ASSERT_EQ(info.rootNode.children.size(), 2u);
+    // The first has 11 children (every file of the profile), the second 11 too
+    EXPECT_EQ(info.rootNode.children[0].children.size(), 11u);
+    EXPECT_EQ(info.rootNode.children[1].children.size(), 11u);
 }

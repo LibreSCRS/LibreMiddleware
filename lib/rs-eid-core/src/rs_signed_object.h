@@ -28,22 +28,24 @@ struct SignedObjectReport
     bool digestsBound = false;
     /// @brief How many digest slots the object carried.
     ///
-    /// The content itself never leaves, but its shape must: a caller that knows
-    /// how many files the object covers has no other way to insist it checked
-    /// all of them, and @ref matchDigests deliberately tolerates fewer.
+    /// The content itself never leaves, but its shape must: a caller needs the
+    /// slot count to tell an object of another layout from a mismatch.
     std::size_t slotCount = 0;
 };
 
 /// @brief Verify a PKCS#7 SignedData whose content is concatenated SHA-256 slots.
 ///
+/// Binding is strictly positional: @p slots holds one entry per digest slot, in
+/// the order the object covers them, and some may be skipped (see @ref SkipSlot).
 /// The signed content never leaves this function: handing it back would invite a
-/// caller to read attacker-chosen bytes that merely look verified.
+/// caller to read attacker-chosen bytes that merely look verified. @c slotCount
+/// is the number of slots the object carried, whether or not it equals
+/// @p slots.size(), so a caller can tell "not ours to judge" from "does not match".
 ///
 /// @param cmsDer  DER or BER (indefinite-length) PKCS#7 SignedData.
-/// @param blocks  Covered files, in the order the object covers them.
+/// @param slots   One entry per slot, in the order the object covers them.
 [[nodiscard]] SignedObjectReport verifySignedObject(std::span<const std::uint8_t> cmsDer,
-                                                    std::span<const BlockCandidates> blocks, DigestBinding binding,
-                                                    const TrustStore& trust);
+                                                    std::span<const SlotInput> slots, const TrustStore& trust);
 
 /// @brief Validate @p signerCert against @p trust and pin it to the document-signer domain.
 ///

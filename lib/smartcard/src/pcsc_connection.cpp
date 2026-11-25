@@ -385,9 +385,8 @@ std::expected<std::vector<uint8_t>, TransportError> PCSCConnection::getATR() con
     // Detached test connection WITH an ATR installed via setDetachedAtr: hand
     // those bytes back. A detached connection with no ATR installed goes on to
     // the body, which fails (throws) as before setDetachedAtr existed --
-    // e.g. eidcard::EIdCard::detectCardType() reached via
-    // CardPlugin::canHandleConnection() on an un-rigged detached session must
-    // keep seeing that failure, not a silent {} that would route it into the
+    // e.g. an ATR-reading CardPlugin::canHandleConnection() on an un-rigged
+    // detached session must keep seeing that failure, not a silent {} that would route it into the
     // AID-probing SELECT fallback and generate APDUs a passive detached rig
     // never expects.
     if (detached() && !detachedAtr.empty()) {

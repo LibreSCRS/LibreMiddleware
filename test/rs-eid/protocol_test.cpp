@@ -2,50 +2,19 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include "card_protocol.h"
 
-using namespace eidcard::protocol;
+#include <rs_document_profile.h>
 
-TEST(EidProtocolATR, GemaltoMatchesExpectedPrefix)
+TEST(EidProtocolAids, ProfileAidsAre11BytesWithTheSerPrefix)
 {
-    // 3B FF 94 00 00 ... — known Gemalto 2014 ATR shape
-    std::vector<uint8_t> atr = {0x3B, 0xFF, 0x94, 0x00, 0x00, 0xFF};
-    EXPECT_TRUE(isGemaltoATR(atr));
-}
-
-TEST(EidProtocolATR, UnknownAtrMatchesNeither)
-{
-    std::vector<uint8_t> atr = {0x3B, 0x00, 0x00, 0x00};
-    EXPECT_FALSE(isGemaltoATR(atr));
-}
-
-TEST(EidProtocolATR, ShortAtrRejectedDefensively)
-{
-    std::vector<uint8_t> atr = {0x3B, 0xFF};
-    EXPECT_FALSE(isGemaltoATR(atr));
-
-    std::vector<uint8_t> empty;
-    EXPECT_FALSE(isGemaltoATR(empty));
-}
-
-TEST(EidProtocolATR, GemaltoRequiresExactByteTwo)
-{
-    // Same prefix but byte[2]=0x95 should not match Gemalto
-    std::vector<uint8_t> atr = {0x3B, 0xFF, 0x95, 0x00, 0x00};
-    EXPECT_FALSE(isGemaltoATR(atr));
-}
-
-TEST(EidProtocolAids, SerianAidsAre11Bytes)
-{
-    EXPECT_EQ(AID_SERID.size(), 11u);
-    EXPECT_EQ(AID_SERIF.size(), 11u);
-    EXPECT_EQ(AID_SERRP.size(), 11u);
-    // All three share the F3 81 00 00 02 prefix
-    EXPECT_EQ(AID_SERID[0], 0xF3);
-    EXPECT_EQ(AID_SERIF[0], 0xF3);
-    EXPECT_EQ(AID_SERRP[0], 0xF3);
-    // ASCII "SER" suffix differentiator
-    EXPECT_EQ(AID_SERID[5], 'S');
-    EXPECT_EQ(AID_SERID[6], 'E');
-    EXPECT_EQ(AID_SERID[7], 'R');
+    const auto profiles = LibreSCRS::RsEId::Core::documentProfiles();
+    ASSERT_EQ(profiles.size(), 4u);
+    for (const auto& p : profiles) {
+        ASSERT_EQ(p.aid.size(), 11u) << p.code;
+        // F3 81 00 00 02, then ASCII "SER" and the two-letter application name.
+        EXPECT_EQ(p.aid[0], 0xF3) << p.code;
+        EXPECT_EQ(p.aid[5], 'S') << p.code;
+        EXPECT_EQ(p.aid[6], 'E') << p.code;
+        EXPECT_EQ(p.aid[7], 'R') << p.code;
+    }
 }

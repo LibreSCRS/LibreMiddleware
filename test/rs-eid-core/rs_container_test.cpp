@@ -112,6 +112,19 @@ TEST(RsContainer, InnerTlvPayloadLeavesBareDerAlone)
     EXPECT_EQ(innerTlvPayload(der).size(), der.size());
 }
 
+// The official ID's one-slot signed object has inner tag 0x0830: its first byte
+// is 0x30 yet it is a wrapper, not the CMS.
+TEST(RsContainer, InnerTlvPayloadStripsATagThatLooksLikeASequence)
+{
+    const std::vector<std::uint8_t> cms{0x30, 0x80, 0x06, 0x01, 0x2A, 0x00, 0x00};
+    std::vector<std::uint8_t> inner{0x30, 0x08};
+    Fx::appendLe16(inner, static_cast<std::uint16_t>(cms.size()));
+    inner.insert(inner.end(), cms.begin(), cms.end());
+
+    const auto out = innerTlvPayload(inner);
+    EXPECT_EQ(std::vector<std::uint8_t>(out.begin(), out.end()), cms);
+}
+
 TEST(RsContainer, InnerTlvPayloadLeavesRuntAlone)
 {
     const std::vector<std::uint8_t> runt{0x10, 0x08, 0x01};

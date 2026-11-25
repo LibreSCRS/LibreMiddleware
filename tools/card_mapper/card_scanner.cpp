@@ -4,7 +4,7 @@
 #include "card_scanner.h"
 #include "apdu_logger.h"
 
-#include <card_protocol.h>
+#include <rs_document_profile.h>
 #include "cardedge_protocol_constants.h"
 #include <health_protocol.h>
 #include <eu_vrc_protocol.h>
@@ -48,11 +48,15 @@ std::vector<AidProbe> getAllKnownProbes()
 
     auto emrtdAid = std::vector<uint8_t>(emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN);
 
-    return {
+    // Every Serbian eID document type, named by the application name in its AID.
+    std::vector<AidProbe> probes;
+    for (const auto& profile : LibreSCRS::RsEId::Core::documentProfiles()) {
+        std::vector<uint8_t> aid(profile.aid.begin(), profile.aid.end());
+        probes.push_back({std::string(aid.begin() + 5, aid.begin() + 10), aid, {aid}});
+    }
+
+    auto others = std::vector<AidProbe>{
         // Simple single-SELECT AIDs
-        {"SERID", eidcard::protocol::AID_SERID, {eidcard::protocol::AID_SERID}},
-        {"SERIF", eidcard::protocol::AID_SERIF, {eidcard::protocol::AID_SERIF}},
-        {"SERRP", eidcard::protocol::AID_SERRP, {eidcard::protocol::AID_SERRP}},
         {"PKCS15", cardedge::protocol::AID_PKCS15, {cardedge::protocol::AID_PKCS15}},
         {"SERVSZK", healthcard::protocol::AID_SERVSZK, {healthcard::protocol::AID_SERVSZK}},
         {"eMRTD", emrtdAid, {emrtdAid}},
@@ -66,6 +70,8 @@ std::vector<AidProbe> getAllKnownProbes()
         {"EU-VRC-RS-SEQ2", SEQ2_CMD1, {SEQ2_CMD1, SEQ2_CMD2, SEQ1_CMD3}, 0x0C},
         {"EU-VRC-RS-SEQ3", SEQ3_CMD1, {SEQ3_CMD1, SEQ3_CMD2, SEQ3_CMD3}, 0x0C},
     };
+    probes.insert(probes.end(), others.begin(), others.end());
+    return probes;
 }
 
 namespace {
@@ -792,9 +798,10 @@ bool sweepSuggestsNoAppletSelected(std::size_t probed, std::size_t rejected, std
 
 std::string matchProfile(const std::vector<std::vector<uint8_t>>& detectedAIDs)
 {
-    bool hasEid = aidContained(detectedAIDs, eidcard::protocol::AID_SERID) ||
-                  aidContained(detectedAIDs, eidcard::protocol::AID_SERIF) ||
-                  aidContained(detectedAIDs, eidcard::protocol::AID_SERRP);
+    bool hasEid = false;
+    for (const auto& profile : LibreSCRS::RsEId::Core::documentProfiles()) {
+        hasEid = hasEid || aidContained(detectedAIDs, std::vector<uint8_t>(profile.aid.begin(), profile.aid.end()));
+    }
     bool hasCardEdge = aidContained(detectedAIDs, cardedge::protocol::AID_PKCS15);
     bool hasHealth = aidContained(detectedAIDs, healthcard::protocol::AID_SERVSZK);
     bool hasVehicle = aidContained(detectedAIDs, euvrc::protocol::EU_VRC_AID) ||

@@ -10,11 +10,11 @@
 #include <smartcard/i_connection.h>
 #include <rs_container.h>
 #include <rs_digest_binding.h>
+#include <rs_document_profile.h>
 #include <rs_signed_object.h>
 #include <rs_tags.h>
 #include <smartcard/chunked_read.h>
 #include <smartcard/or_throw.h>
-#include <tlv.h>
 
 #include <algorithm>
 #include <map>
@@ -76,7 +76,7 @@ constexpr std::uint8_t kMasterFileLo = 0x00;
 }
 
 /// Digest input for one covered file: the container exactly as signed.
-[[nodiscard]] Core::BlockCandidates blockOf(const std::vector<std::uint8_t>& file)
+[[nodiscard]] Core::SlotInput slotOf(const std::vector<std::uint8_t>& file)
 {
     return Core::BlockCandidates{file};
 }
@@ -91,50 +91,6 @@ constexpr std::uint8_t kMasterFileLo = 0x00;
     const auto body = container->subspan(Core::kContainerHeaderSize);
     const auto cms = Core::innerTlvPayload(body);
     return {cms.begin(), cms.end()};
-}
-
-struct FieldSpec
-{
-    std::uint16_t tag;
-    const char* key;
-    const char* label;
-};
-
-// Only tags whose meaning is confirmed. Six more appear on the card carrying
-// filler values; naming a personal field wrongly is worse than not showing it.
-constexpr std::array kKnownFields{
-    FieldSpec{Core::tags::kDocumentSerialNo, "document_serial", "Document Number"},
-    FieldSpec{Core::tags::kParentGivenName, "parent_given_name", "Parent Given Name"},
-    FieldSpec{Core::tags::kCommunityOfBirth, "community_of_birth", "Community of Birth"},
-    FieldSpec{Core::tags::kStateOfBirth, "state_of_birth", "State of Birth"},
-    FieldSpec{Core::tags::kState, "state", "State"},
-    FieldSpec{Core::tags::kCommunity, "community", "Community"},
-    FieldSpec{Core::tags::kPlace, "place", "Place"},
-    FieldSpec{Core::tags::kStreet, "street", "Street"},
-    FieldSpec{Core::tags::kHouseNumber, "house_number", "House Number"},
-    FieldSpec{Core::tags::kHouseLetter, "house_letter", "House Letter"},
-    FieldSpec{Core::tags::kEntrance, "entrance", "Entrance"},
-    FieldSpec{Core::tags::kFloor, "floor", "Floor"},
-    FieldSpec{Core::tags::kApartmentNumber, "apartment_number", "Apartment"},
-    FieldSpec{Core::tags::kAddressDate, "address_date", "Address Date"},
-    FieldSpec{Core::tags::kAddressLabel, "address_label", "Address Label"},
-};
-
-void appendFields(LibreSCRS::Plugin::CardFieldGroup& g, const std::vector<std::uint8_t>& file)
-{
-    const auto container = Core::leadingTlv(file);
-    if (!container || container->size() <= Core::kContainerHeaderSize) {
-        return;
-    }
-    const auto body = container->subspan(Core::kContainerHeaderSize);
-    const auto fields = SC::parseTLV(body.data(), body.size());
-
-    for (const auto& spec : kKnownFields) {
-        const auto value = SC::findString(fields, spec.tag);
-        if (!value.empty()) {
-            g.addText(spec.key, spec.label, value);
-        }
-    }
 }
 
 } // namespace
@@ -201,15 +157,15 @@ std::vector<LibreSCRS::Plugin::CardFieldGroup> RsAnnexReader::read(const EfDirEn
         if (cms.empty()) {
             return false;
         }
-        std::vector<Core::BlockCandidates> blocks;
-        blocks.reserve(covered.size());
+        std::vector<Core::SlotInput> slots;
+        slots.reserve(covered.size());
         for (const auto fid : covered) {
-            blocks.push_back(blockOf(files.at(fid)));
+            slots.push_back(slotOf(files.at(fid)));
         }
-        const auto report = Core::verifySignedObject(cms, blocks, Core::DigestBinding::Positional, trust);
-        // The primitive tolerates a short block list; this caller must not, or
-        // files the object covered would go unexamined.
-        return report.digestsBound && report.slotCount == blocks.size();
+        const auto report = Core::verifySignedObject(cms, slots, trust);
+        // The object must carry exactly one slot per covered file, in order,
+        // or files it covered would go unexamined.
+        return report.digestsBound && report.slotCount == slots.size();
     };
 
     bound = verify(Core::tags::kFidSodFixed, coverage.fixed) && verify(Core::tags::kFidSodVariable, coverage.variable);
@@ -223,9 +179,9 @@ std::vector<LibreSCRS::Plugin::CardFieldGroup> RsAnnexReader::read(const EfDirEn
     LibreSCRS::Plugin::CardFieldGroup personal;
     personal.groupKey = annexGroupKey(annexId(), "personal");
     personal.groupLabel = "Additional Data";
-    for (const auto& [fid, file] : files) {
-        if (fid != Core::tags::kFidManifest) {
-            appendFields(personal, file);
+    for (const auto& group : Core::buildGroups(Core::annexProfile(), files, Core::Surface::Annex)) {
+        for (const auto& field : group.fields) {
+            personal.addText(field.key, field.label, field.value);
         }
     }
     if (personal.fields.empty()) {

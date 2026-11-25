@@ -7,11 +7,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_library(RsEIdCore STATIC
     src/rs_container.cpp
     src/rs_digest_binding.cpp
+    src/rs_document_profile.cpp
+    src/rs_profiles.cpp
     src/rs_signed_object.cpp
     src/rs_trust_store.cpp
     # Private headers (IDE visibility)
     src/rs_container.h
     src/rs_digest_binding.h
+    src/rs_document_profile.h
     src/rs_signed_object.h
     src/rs_tags.h
     src/rs_trust_store.h

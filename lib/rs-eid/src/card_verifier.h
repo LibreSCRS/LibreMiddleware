@@ -9,20 +9,17 @@
 
 #include <cstdint>
 #include <string>
-#include <utility>
 #include <vector>
 #include "eidtypes.h"
 
+#include <rs_document_profile.h>
 #include <rs_trust_store.h>
-
-namespace LibreSCRS::SmartCard {
-class CardConnection;
-}
 
 namespace eidcard {
 
-class CardReaderBase;
-
+/// Judges a card from the files already read: no card access, so what it says
+/// is about the bytes in hand. A covered file that is not among them (absent,
+/// protected, unreadable) is a mismatch, never a skip.
 class CardVerifier
 {
 public:
@@ -36,23 +33,30 @@ public:
     // Use this when certs are provided as raw bytes (e.g. from Qt resources).
     void addCertificate(const std::vector<uint8_t>& derCert);
 
-    VerificationResult verifyCard(LibreSCRS::SmartCard::CardConnection& conn, CardReaderBase& reader,
-                                  CardType cardType);
+    /// The signer chain of the profile's card-certificate object.
+    VerificationResult verifyCard(const LibreSCRS::RsEId::Core::DocumentProfile& profile,
+                                  const LibreSCRS::RsEId::Core::RawFiles& files);
 
-    VerificationResult verifyFixedData(LibreSCRS::SmartCard::CardConnection& conn, CardReaderBase& reader,
-                                       CardType cardType);
+    /// Every Fixed signed object of the profile: Invalid if any is, else
+    /// Unknown if any is, else Valid.
+    VerificationResult verifyFixedData(const LibreSCRS::RsEId::Core::DocumentProfile& profile,
+                                       const LibreSCRS::RsEId::Core::RawFiles& files);
 
-    VerificationResult verifyVariableData(LibreSCRS::SmartCard::CardConnection& conn, CardReaderBase& reader,
-                                          CardType cardType);
+    /// The same over the Variable objects.
+    VerificationResult verifyVariableData(const LibreSCRS::RsEId::Core::DocumentProfile& profile,
+                                          const LibreSCRS::RsEId::Core::RawFiles& files);
+
+    /// Files a verdict for @p role reads: the signed objects and what they cover,
+    /// except the protected slot.
+    static std::vector<std::uint16_t> filesFor(const LibreSCRS::RsEId::Core::DocumentProfile& profile,
+                                               LibreSCRS::RsEId::Core::SodRole role);
 
 private:
-    // Gemalto (new card) card-level certificate verification
-    VerificationResult verifyGemaltoCardCert(LibreSCRS::SmartCard::CardConnection& conn, CardReaderBase& reader);
-
-    // Gemalto (new card) SOD/PKCS#7 verification
-    VerificationResult verifyGemaltoSOD(LibreSCRS::SmartCard::CardConnection& conn, CardReaderBase& reader,
-                                        uint8_t sodFileH, uint8_t sodFileL,
-                                        const std::vector<std::pair<uint8_t, uint8_t>>& dataFileIds);
+    VerificationResult verifyRole(const LibreSCRS::RsEId::Core::DocumentProfile& profile,
+                                  LibreSCRS::RsEId::Core::SodRole role, const LibreSCRS::RsEId::Core::RawFiles& files);
+    VerificationResult verifySod(const LibreSCRS::RsEId::Core::DocumentProfile& profile,
+                                 const LibreSCRS::RsEId::Core::SodSpec& sod,
+                                 const LibreSCRS::RsEId::Core::RawFiles& files);
 
     LibreSCRS::RsEId::Core::TrustStore trust;
 };
