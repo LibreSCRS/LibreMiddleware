@@ -217,9 +217,12 @@ its Security Object.
    that answers decides the document type; the ATR is not consulted.
 2. **SELECT EF by path** for each file of that document's description:
    `00 A4 08 00 02 <FID_H> <FID_L> 04` (example: DocumentData 0F02).
-3. **READ BINARY** in 255-byte chunks: `00 B0 <offsetHi> <offsetLo> FF`. Files
-   marked for allocation reads (`0F12`, `0D10`) are read to the size the SELECT
-   response gives; the others to the length declared in their 4-byte header.
+3. **READ BINARY**: `00 B0 <offsetHi> <offsetLo> <Le>`. A file with a header
+   is first read with Le `04`, the 4-byte header that declares its length;
+   files marked for allocation reads (`0F12`, `0D10`) are first read for the
+   size the SELECT response gives. Every later read asks for everything still
+   unread (at most 65535 bytes); the transport lowers Le to what the reader and
+   card accept, and the read advances by what the card returned.
 4. **Parse response** as LE 16-bit TLV (tag and length are little-endian 16-bit values)
 5. **Verify the Security Objects**, in the verdict order given above: signature
    and chain first, then slot count, then each file at its position.

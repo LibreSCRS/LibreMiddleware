@@ -175,7 +175,7 @@ AppletInfo buildEidInfo()
     info.readProcedure = {
         "SELECT by AID, in order SERID, SERIF, SERRP, SEREL: `00 A4 04 00 0B F3 81 00 00 02 53 45 52 <x> <y> 01`",
         "SELECT EF by path: `00 A4 08 00 02 <FID_H> <FID_L> 04`",
-        "READ BINARY in 255-byte chunks: `00 B0 <offsetHi> <offsetLo> FF`",
+        "READ BINARY: 4-byte header (or SELECT-given size) first, then the rest; Le fit by transport",
         "Parse response as LE 16-bit TLV",
     };
 
